@@ -1,6 +1,6 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
+import { useLoaderData, useLocation, useSearchParams } from "@remix-run/react";
 import {
   Page,
   Layout,
@@ -17,39 +17,97 @@ import {
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
+import db from "../db.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
 
-  // Mock data for now - in a real app, this would come from your database
-  const activeTests = [
-    {
-      id: "1",
-      productName: "Premium Wireless Headphones",
-      originalPrice: "$199.99",
-      testPrice: "$179.99",
-      status: "active",
-      startDate: "2024-01-15",
-      participants: 1250,
-      conversionRate: "12.5%",
+  // Get tests from database
+  const tests = await db.aBTest.findMany({
+    where: { shop: session.shop },
+    include: {
+      products: true,
+      variants: true,
     },
-    {
-      id: "2", 
-      productName: "Smart Fitness Watch",
-      originalPrice: "$299.99",
-      testPrice: "$249.99",
-      status: "paused",
-      startDate: "2024-01-10",
-      participants: 890,
-      conversionRate: "8.2%",
-    },
-  ];
+    orderBy: { createdAt: 'desc' },
+  });
 
-  return json({ activeTests });
+  const activeTests = tests.map(test => ({
+    id: test.id.toString(),
+    title: test.title,
+    productName: test.products[0]?.productTitle || "No Product",
+    originalPrice: `$${test.basePrice.toFixed(2)}`,
+    testPrice: test.variants.length > 0 ? `$${test.variants[0].price.toFixed(2)}` : "N/A",
+    status: test.status,
+    startDate: test.startedAt ? test.startedAt.toISOString().split('T')[0] : "Not Started",
+    participants: 0, // This would come from analytics
+    conversionRate: "0%", // This would come from analytics
+  }));
+
+  return json({ activeTests, shop: session.shop });
 };
 
 export default function ActiveTests() {
-  const { activeTests } = useLoaderData<typeof loader>();
+  const { activeTests, shop } = useLoaderData<typeof loader>();
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
+  
+  // Check if we're in create mode
+  const isCreateMode = searchParams.get("create") === "true";
+  
+  const searchParamsObj = new URLSearchParams(location.search);
+  if (!searchParamsObj.get("shop") && shop) {
+    searchParamsObj.set("shop", shop);
+  }
+  // Ensure we carry forward host if it exists; required for embedded apps
+  const queryString = searchParamsObj.toString();
+  const createUrl = `/app/tests?create=true${queryString ? `&${queryString}` : ""}`;
+
+  // If in create mode, show the create page
+  if (isCreateMode) {
+    return (
+      <Page>
+        <TitleBar title="Create A/B Test" />
+        <BlockStack gap="500">
+          <Card>
+            <BlockStack gap="400">
+              <Text as="h2" variant="headingMd">Choose Test Type</Text>
+              <InlineStack gap="400" wrap>
+                <Card>
+                  <BlockStack gap="300">
+                    <InlineStack gap="200" align="start">
+                      <Icon source="products" />
+                      <Text as="h3" variant="headingMd">Single Product Test</Text>
+                    </InlineStack>
+                    <Text variant="bodyMd" tone="subdued">
+                      Test different prices for a single product.
+                    </Text>
+                    <Button url={`/app/tests/new?type=single${location.search ? location.search : ""}`} variant="primary">
+                      Continue
+                    </Button>
+                  </BlockStack>
+                </Card>
+                <Card>
+                  <BlockStack gap="300">
+                    <InlineStack gap="200" align="start">
+                      <Icon source="analytics" />
+                      <Text as="h3" variant="headingMd">Multiple Products Test</Text>
+                    </InlineStack>
+                    <Text variant="bodyMd" tone="subdued">
+                      Test prices across multiple products at once.
+                    </Text>
+                    <Button url={`/app/tests/new?type=multiple${location.search ? location.search : ""}`}>
+                      Continue
+                    </Button>
+                  </BlockStack>
+                </Card>
+              </InlineStack>
+            </BlockStack>
+          </Card>
+        </BlockStack>
+      </Page>
+    );
+  }
 
   return (
     <Page>
@@ -66,7 +124,7 @@ export default function ActiveTests() {
                   Manage your price A/B tests and monitor their performance
                 </Text>
               </BlockStack>
-              <Button variant="primary">
+              <Button variant="primary" url={createUrl}>
                 Create New Test
               </Button>
             </InlineStack>
@@ -81,7 +139,7 @@ export default function ActiveTests() {
                   heading="No active tests yet"
                   action={{
                     content: "Create your first test",
-                    onAction: () => {},
+                    url: createUrl,
                   }}
                   image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
                 >
@@ -94,40 +152,43 @@ export default function ActiveTests() {
                   resourceName={{ singular: "test", plural: "tests" }}
                   items={activeTests}
                   renderItem={(item) => {
-                    const { id, productName, originalPrice, testPrice, status, startDate, participants, conversionRate } = item;
+                    const { id, title, productName, originalPrice, testPrice, status, startDate, participants, conversionRate } = item;
                     return (
                       <ResourceItem
                         id={id}
                         url={`/app/tests/${id}`}
-                        accessibilityLabel={`View details for ${productName}`}
+                        accessibilityLabel={`View details for ${title}`}
                       >
                         <InlineStack align="space-between">
                           <BlockStack gap="200">
                             <InlineStack gap="200" align="start">
                               <Text variant="bodyMd" fontWeight="bold" as="h3">
-                                {productName}
+                                {title}
                               </Text>
-                              <Badge status={status === "active" ? "success" : "warning"}>
+                              <Badge tone={status === "active" ? "success" : status === "draft" ? "info" : "warning"}>
                                 {status}
                               </Badge>
                             </InlineStack>
                             <InlineStack gap="400">
-                              <Text variant="bodyMd" tone="subdued">
+                              <Text as="p" variant="bodyMd" tone="subdued">
+                                Product: {productName}
+                              </Text>
+                              <Text as="p" variant="bodyMd" tone="subdued">
                                 Original: {originalPrice}
                               </Text>
-                              <Text variant="bodyMd" tone="subdued">
+                              <Text as="p" variant="bodyMd" tone="subdued">
                                 Test: {testPrice}
                               </Text>
-                              <Text variant="bodyMd" tone="subdued">
+                              <Text as="p" variant="bodyMd" tone="subdued">
                                 Started: {startDate}
                               </Text>
                             </InlineStack>
                           </BlockStack>
                           <BlockStack gap="200" align="end">
-                            <Text variant="bodyMd" fontWeight="bold">
+                            <Text as="p" variant="bodyMd" fontWeight="bold">
                               {participants} participants
                             </Text>
-                            <Text variant="bodyMd" tone="subdued">
+                            <Text as="p" variant="bodyMd" tone="subdued">
                               {conversionRate} conversion
                             </Text>
                           </BlockStack>

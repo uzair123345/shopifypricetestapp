@@ -1,13 +1,7 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client-js"
 }
 
-// Note that some adapters may set a maximum length for the String type by default, please ensure your strings are long
-// enough when changing adapters.
-// See https://www.prisma.io/docs/orm/reference/prisma-schema-reference#string for more information
 datasource db {
   provider = "sqlite"
   url      = "file:dev.sqlite"
@@ -29,4 +23,48 @@ model Session {
   locale        String?
   collaborator  Boolean?  @default(false)
   emailVerified Boolean?  @default(false)
+}
+
+model ABTest {
+  id                  Int             @id @default(autoincrement())
+  title               String
+  shop                String
+  testType            String
+  status              String          @default("draft")
+  basePrice           Float
+  baseTrafficPercent  Float
+  totalTrafficPercent Float           @default(100.0)
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+  startedAt           DateTime?
+  endedAt             DateTime?
+  products            ABTestProduct[]
+  variants            ABTestVariant[]
+
+  @@map("ab_tests")
+}
+
+model ABTestProduct {
+  id            Int    @id @default(autoincrement())
+  abTestId      Int
+  productId     String
+  productTitle  String
+  productHandle String
+  basePrice     Float
+  abTest        ABTest @relation(fields: [abTestId], references: [id], onDelete: Cascade)
+
+  @@map("ab_test_products")
+}
+
+model ABTestVariant {
+  id             Int     @id @default(autoincrement())
+  abTestId       Int
+  variantName    String
+  price          Float
+  discount       Float?
+  trafficPercent Float
+  isBaseVariant  Boolean @default(false)
+  abTest         ABTest  @relation(fields: [abTestId], references: [id], onDelete: Cascade)
+
+  @@map("ab_test_variants")
 }

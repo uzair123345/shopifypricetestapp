@@ -68,11 +68,11 @@ export default function Products() {
   const getTestStatusBadge = (status: string) => {
     switch (status) {
       case "testing":
-        return <Badge status="info">Testing</Badge>;
+        return <Badge tone="info">Testing</Badge>;
       case "completed":
-        return <Badge status="success">Completed</Badge>;
+        return <Badge tone="success">Completed</Badge>;
       case "available":
-        return <Badge status="new">Available</Badge>;
+        return <Badge tone="new">Available</Badge>;
       default:
         return <Badge>Unknown</Badge>;
     }
@@ -141,19 +141,19 @@ export default function Products() {
                               <Text variant="bodyMd" fontWeight="bold" as="h3">
                                 {title}
                               </Text>
-                              <Badge status={status === "active" ? "success" : "warning"}>
+                              <Badge tone={status === "active" ? "success" : "warning"}>
                                 {status}
                               </Badge>
                               {getTestStatusBadge(testStatus)}
                             </InlineStack>
                             <InlineStack gap="400">
-                              <Text variant="bodyMd" tone="subdued">
+                              <Text as="p" variant="bodyMd" tone="subdued">
                                 Price: {price}
                               </Text>
-                              <Text variant="bodyMd" tone="subdued">
+                              <Text as="p" variant="bodyMd" tone="subdued">
                                 Variants: {variants}
                               </Text>
-                              <Text variant="bodyMd" tone="subdued">
+                              <Text as="p" variant="bodyMd" tone="subdued">
                                 Inventory: {inventory}
                               </Text>
                             </InlineStack>

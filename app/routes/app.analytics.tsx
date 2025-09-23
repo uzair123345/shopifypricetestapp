@@ -75,8 +75,8 @@ export default function Analytics() {
     test.participants.toString(),
     test.originalConversionRate,
     test.testConversionRate,
-    <Badge status="success">{test.improvement}</Badge>,
-    <Badge status="success">{test.revenueImpact}</Badge>,
+    <Badge tone="success">{test.improvement}</Badge>,
+    <Badge tone="success">{test.revenueImpact}</Badge>,
   ]);
 
   return (
@@ -98,7 +98,7 @@ export default function Analytics() {
 
         {/* Summary Stats */}
         <Layout>
-          <Layout.Section variant="oneQuarter">
+          <Layout.Section variant="oneThird">
             <Card>
               <BlockStack gap="200" align="center">
                 <Text as="h3" variant="headingLg">
@@ -110,7 +110,7 @@ export default function Analytics() {
               </BlockStack>
             </Card>
           </Layout.Section>
-          <Layout.Section variant="oneQuarter">
+          <Layout.Section variant="oneThird">
             <Card>
               <BlockStack gap="200" align="center">
                 <Text as="h3" variant="headingLg" tone="success">
@@ -122,7 +122,7 @@ export default function Analytics() {
               </BlockStack>
             </Card>
           </Layout.Section>
-          <Layout.Section variant="oneQuarter">
+          <Layout.Section variant="oneThird">
             <Card>
               <BlockStack gap="200" align="center">
                 <Text as="h3" variant="headingLg" tone="success">
@@ -134,7 +134,7 @@ export default function Analytics() {
               </BlockStack>
             </Card>
           </Layout.Section>
-          <Layout.Section variant="oneQuarter">
+          <Layout.Section variant="oneThird">
             <Card>
               <BlockStack gap="200" align="center">
                 <Text as="h3" variant="headingLg">

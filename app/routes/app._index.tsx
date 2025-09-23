@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { useFetcher, Link as RemixLink } from "@remix-run/react";
+import { json } from "@remix-run/node";
+import { useFetcher, Link as RemixLink, useLoaderData, useLocation } from "@remix-run/react";
 import {
   Page,
   Layout,
@@ -16,11 +17,47 @@ import {
 } from "@shopify/polaris";
 import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
+import db from "../db.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
 
-  return null;
+  // Get test statistics from database
+  const activeTests = await db.aBTest.count({
+    where: { 
+      shop: session.shop,
+      status: "active" 
+    },
+  });
+
+  const totalTests = await db.aBTest.count({
+    where: { shop: session.shop },
+  });
+
+  const completedTests = await db.aBTest.count({
+    where: { 
+      shop: session.shop,
+      status: "completed" 
+    },
+  });
+
+  const productsUnderTest = await db.aBTestProduct.count({
+    where: {
+      abTest: {
+        shop: session.shop,
+        status: { in: ["active", "paused"] }
+      }
+    },
+  });
+
+  return json({
+    stats: {
+      activeTests,
+      totalTests,
+      completedTests,
+      productsUnderTest,
+    }
+  });
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -93,7 +130,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function Index() {
+  const { stats } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
+  const location = useLocation();
 
   const shopify = useAppBridge();
   const isLoading =
@@ -157,7 +196,11 @@ export default function Index() {
                   <List.Item>Configure test parameters and target audience</List.Item>
                   <List.Item>Monitor results and optimize based on data</List.Item>
                 </List>
-                <Button variant="primary" size="large" url="/app/tests">
+                <Button
+                  variant="primary"
+                  size="large"
+                  url={`/app/tests/create${location.search}`}
+                >
                   Create Your First Test
                 </Button>
               </BlockStack>
@@ -248,7 +291,7 @@ export default function Index() {
                     <Layout.Section variant="oneThird">
                       <BlockStack gap="200" align="center">
                         <Text as="h3" variant="headingLg">
-                          0
+                          {stats.activeTests}
                         </Text>
                         <Text variant="bodyMd" as="p" tone="subdued">
                           Active Tests
@@ -258,7 +301,7 @@ export default function Index() {
                     <Layout.Section variant="oneThird">
                       <BlockStack gap="200" align="center">
                         <Text as="h3" variant="headingLg">
-                          0
+                          {stats.productsUnderTest}
                         </Text>
                         <Text variant="bodyMd" as="p" tone="subdued">
                           Products Under Test
@@ -268,7 +311,7 @@ export default function Index() {
                     <Layout.Section variant="oneThird">
                       <BlockStack gap="200" align="center">
                         <Text as="h3" variant="headingLg">
-                          0
+                          {stats.completedTests}
                         </Text>
                         <Text variant="bodyMd" as="p" tone="subdued">
                           Completed Tests

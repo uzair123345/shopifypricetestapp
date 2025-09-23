@@ -2,7 +2,7 @@
 
 client_id = "beca6ad051b2ddeeaebd410aa5b32c12"
 name = "ab-price-test"
-application_url = "https://example.com"
+application_url = "https://setting-represent-manufacturing-jaguar.trycloudflare.com"
 embedded = true
 
 [build]
@@ -25,4 +25,4 @@ api_version = "2025-10"
 scopes = "write_products"
 
 [auth]
-redirect_urls = [ "https://example.com/api/auth" ]
+redirect_urls = [ "https://setting-represent-manufacturing-jaguar.trycloudflare.com/api/auth" ]

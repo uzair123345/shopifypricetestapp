@@ -44,11 +44,16 @@ export default defineConfig({
       preflightContinue: true,
     },
     port: Number(process.env.PORT || 3000),
-    hmr: hmrConfig,
+    hmr: {
+      clientPort: 443,
+    },
     fs: {
       // See https://vitejs.dev/config/server-options.html#server-fs-allow for more information
       allow: ["app", "node_modules"],
     },
+  },
+  esbuild: {
+    target: "es2020",
   },
   plugins: [
     remix({
@@ -66,8 +71,17 @@ export default defineConfig({
   ],
   build: {
     assetsInlineLimit: 0,
+    rollupOptions: {
+      output: {
+        manualChunks: undefined,
+      },
+    },
   },
   optimizeDeps: {
     include: ["@shopify/app-bridge-react", "@shopify/polaris"],
+    exclude: ["@shopify/app-bridge"],
+  },
+  define: {
+    global: "globalThis",
   },
 }) satisfies UserConfig;
