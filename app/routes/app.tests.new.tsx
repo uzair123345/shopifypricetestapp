@@ -16,6 +16,8 @@ import {
   Banner,
   Divider,
   Box,
+  RadioButton,
+  Collapsible,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
@@ -159,8 +161,8 @@ export default function NewTest() {
   const [selectedProducts, setSelectedProducts] = useState<string[]>([]);
   const [baseTrafficPercent, setBaseTrafficPercent] = useState("50");
   const [variants, setVariants] = useState([
-    { name: "", price: "", discount: "", trafficPercent: "25" },
-    { name: "", price: "", discount: "", trafficPercent: "25" },
+    { name: "Control (Original Price)", discount: "0", trafficPercent: "50" },
+    { name: "Test Variant 1", discount: "10", trafficPercent: "50" },
   ]);
 
   const selectedProductData = products.find((p: any) => p.id === selectedProduct);
@@ -197,7 +199,7 @@ export default function NewTest() {
   };
 
   const addVariant = () => {
-    setVariants([...variants, { name: "", price: "", discount: "", trafficPercent: "0" }]);
+    setVariants([...variants, { name: `Test Variant ${variants.length}`, discount: "0", trafficPercent: "0" }]);
   };
 
   const removeVariant = (index: number) => {
@@ -209,9 +211,14 @@ export default function NewTest() {
     return parseFloat(baseTrafficPercent || "0") + variantTotal;
   };
 
+  const calculateFinalPrice = (basePrice: number, discountPercent: number) => {
+    const discount = (basePrice * discountPercent) / 100;
+    return basePrice - discount;
+  };
+
   return (
     <Page>
-      <TitleBar title="Create New Test" />
+      <TitleBar title="Create A/B Test" />
       <BlockStack gap="500">
         {actionData?.error && (
           <Banner tone="critical">
@@ -224,104 +231,249 @@ export default function NewTest() {
             <Layout.Section>
               <Card>
                 <BlockStack gap="400">
-                  <Text as="h2" variant="headingMd">
-                    Test Configuration
-                  </Text>
+                  {/* Test Details Section */}
+                  <BlockStack gap="300">
+                    <Text as="h2" variant="headingMd">Test Details</Text>
+                    
+                    <TextField
+                      label="Test Name"
+                      name="title"
+                      placeholder="e.g., Product X Price Test"
+                      autoComplete="off"
+                      requiredIndicator
+                    />
 
-                  <TextField
-                    label="Test Title"
-                    name="title"
-                    placeholder="e.g., Holiday Sale Price Test"
-                    autoComplete="off"
-                  />
+                    <TextField
+                      label="Test Description"
+                      name="description"
+                      placeholder="Describe what you're testing..."
+                      multiline={3}
+                      autoComplete="off"
+                    />
+                  </BlockStack>
 
-                  <Select
-                    label="Test Type"
-                    name="testType"
-                    options={[
-                      { label: "Single Product Test", value: "single" },
-                      { label: "Multiple Product Test", value: "multiple" },
-                    ]}
-                    value={testType}
-                    onChange={handleTestTypeChange}
-                    helpText="Choose whether to test one product or multiple products"
-                  />
+                  <Divider />
 
-                  {testType === "single" ? (
-                    <>
-                      <Select
-                        label="Select Product"
-                        name="productId"
-                        options={[
-                          { label: "Choose a product...", value: "" },
-                          ...productOptions,
-                        ]}
-                        value={selectedProduct}
-                        onChange={setSelectedProduct}
-                        helpText="Select the product you want to test different prices for"
-                      />
+                  {/* Test Type Section */}
+                  <BlockStack gap="300">
+                    <Text as="h3" variant="headingMd">Test Type</Text>
+                    <BlockStack gap="200">
+                      <InlineStack gap="200" align="start">
+                        <RadioButton
+                          label="Single Product Test"
+                          checked={testType === "single"}
+                          id="single"
+                          name="testType"
+                          onChange={() => handleTestTypeChange("single")}
+                        />
+                      </InlineStack>
+                      <InlineStack gap="200" align="start">
+                        <RadioButton
+                          label="Multiple Products Test"
+                          checked={testType === "multiple"}
+                          id="multiple"
+                          name="testType"
+                          onChange={() => handleTestTypeChange("multiple")}
+                        />
+                      </InlineStack>
+                    </BlockStack>
+                  </BlockStack>
 
-                      {selectedProductData && (
+                  <Divider />
+
+                  {/* Product Selection Section */}
+                  <BlockStack gap="300">
+                    <Text as="h3" variant="headingMd">Product Selection</Text>
+                    
+                    {testType === "single" ? (
+                      <>
+                        <Select
+                          label="Product"
+                          name="productId"
+                          options={[
+                            { label: "Select a product...", value: "" },
+                            ...productOptions,
+                          ]}
+                          value={selectedProduct}
+                          onChange={setSelectedProduct}
+                          requiredIndicator
+                        />
+
+                        {selectedProductData && (
+                          <Box padding="300" background="bg-surface-secondary" borderRadius="200">
+                            <BlockStack gap="200">
+                              <Text as="p" variant="bodyMd" fontWeight="bold">
+                                Base Price ($): ${selectedProductData.price}
+                              </Text>
+                              <Text as="p" variant="bodyMd" tone="subdued">
+                                The original price used as baseline for calculating variant prices (auto-detected from product data)
+                              </Text>
+                            </BlockStack>
+                          </Box>
+                        )}
+
+                        <TextField
+                          label="Base Price Traffic Percentage"
+                          name="baseTrafficPercent"
+                          type="number"
+                          value={baseTrafficPercent}
+                          onChange={setBaseTrafficPercent}
+                          suffix="%"
+                          min="0"
+                          max="100"
+                          step={0.1}
+                          autoComplete="off"
+                          helpText="Percentage of visitors who will see the original price"
+                        />
+                      </>
+                    ) : (
+                      <>
+                        <Text as="p" variant="bodyMd" fontWeight="bold">
+                          Select Products (Multiple Selection)
+                        </Text>
                         <Box padding="300" background="bg-surface-secondary" borderRadius="200">
                           <BlockStack gap="200">
-                            <Text as="p" variant="bodyMd" fontWeight="bold">
-                              Selected Product: {selectedProductData.title}
-                            </Text>
-                            <Text as="p" variant="bodyMd" tone="subdued">
-                              Current Price: ${selectedProductData.price}
-                            </Text>
-                          </BlockStack>
-                        </Box>
-                      )}
-                    </>
-                  ) : (
-                    <>
-                      <Text as="p" variant="bodyMd" fontWeight="bold">
-                        Select Products (Multiple Selection)
-                      </Text>
-                      <Text as="p" variant="bodyMd" tone="subdued">
-                        Choose multiple products to test different prices across your catalog
-                      </Text>
-                      <Box padding="300" background="bg-surface-secondary" borderRadius="200">
-                        <BlockStack gap="200">
-                          {products.map((product: any) => (
-                            <InlineStack key={product.id} gap="300" align="space-between">
-                              <InlineStack gap="200">
-                                <input
-                                  type="checkbox"
-                                  id={`product-${product.id}`}
-                                  checked={selectedProducts.includes(product.id)}
-                                  onChange={() => handleProductSelection(product.id)}
-                                />
-                                <label htmlFor={`product-${product.id}`}>
-                                  <Text as="span" variant="bodyMd">
-                                    {product.title} - ${product.price}
-                                  </Text>
-                                </label>
+                            {products.map((product: any) => (
+                              <InlineStack key={product.id} gap="300" align="space-between">
+                                <InlineStack gap="200">
+                                  <input
+                                    type="checkbox"
+                                    id={`product-${product.id}`}
+                                    checked={selectedProducts.includes(product.id)}
+                                    onChange={() => handleProductSelection(product.id)}
+                                  />
+                                  <label htmlFor={`product-${product.id}`}>
+                                    <Text as="span" variant="bodyMd">
+                                      {product.title} - ${product.price}
+                                    </Text>
+                                  </label>
+                                </InlineStack>
                               </InlineStack>
-                            </InlineStack>
-                          ))}
-                        </BlockStack>
-                      </Box>
-
-                      {selectedProductsData.length > 0 && (
-                        <Box padding="300" background="bg-surface-info" borderRadius="200">
-                          <BlockStack gap="200">
-                            <Text as="p" variant="bodyMd" fontWeight="bold">
-                              Selected Products ({selectedProductsData.length}):
-                            </Text>
-                            {selectedProductsData.map((product: any) => (
-                              <Text as="p" key={product.id} variant="bodyMd" tone="subdued">
-                                • {product.title} - ${product.price}
-                              </Text>
                             ))}
                           </BlockStack>
                         </Box>
-                      )}
-                    </>
-                  )}
+
+                        <TextField
+                          label="Base Price Traffic Percentage"
+                          name="baseTrafficPercent"
+                          type="number"
+                          value={baseTrafficPercent}
+                          onChange={setBaseTrafficPercent}
+                          suffix="%"
+                          min="0"
+                          max="100"
+                          step={0.1}
+                          autoComplete="off"
+                          helpText="Percentage of visitors who will see the original price"
+                        />
+                      </>
+                    )}
+                  </BlockStack>
+
+                  <Divider />
+
+                  {/* Test Variants Section */}
+                  <BlockStack gap="300">
+                    <InlineStack align="space-between">
+                      <Text as="h3" variant="headingMd">Test Variants</Text>
+                      <Button 
+                        onClick={addVariant} 
+                        size="slim"
+                        disabled={variants.length >= 5}
+                      >
+                        Add Variant
+                      </Button>
+                    </InlineStack>
+
+                    {variants.map((variant, index) => (
+                      <Box key={index} padding="400" background="bg-surface-secondary" borderRadius="200">
+                        <BlockStack gap="300">
+                          <InlineStack align="space-between">
+                            <Text as="h4" variant="headingSm">Variant {index + 1}</Text>
+                            {index > 0 && (
+                              <Button
+                                onClick={() => removeVariant(index)}
+                                variant="tertiary"
+                                tone="critical"
+                                size="slim"
+                              >
+                                Remove
+                              </Button>
+                            )}
+                          </InlineStack>
+
+                          <InlineStack gap="300" align="start">
+                            <Box minWidth="200px">
+                              <TextField
+                                label="Variant Name"
+                                name="variantName"
+                                value={variant.name}
+                                onChange={(value) => updateVariant(index, "name", value)}
+                                autoComplete="off"
+                              />
+                            </Box>
+                            <Box minWidth="120px">
+                              <TextField
+                                label="Discount %"
+                                name="variantDiscount"
+                                type="number"
+                                value={variant.discount}
+                                onChange={(value) => updateVariant(index, "discount", value)}
+                                suffix="%"
+                                min="0"
+                                max="100"
+                                step={0.1}
+                                autoComplete="off"
+                              />
+                            </Box>
+                            <Box minWidth="120px">
+                              <TextField
+                                label="Final Price ($)"
+                                name="variantPrice"
+                                type="number"
+                                value={selectedProductData ? calculateFinalPrice(parseFloat(selectedProductData.price), parseFloat(variant.discount || "0")).toFixed(2) : "0.00"}
+                                prefix="$"
+                                step={0.01}
+                                autoComplete="off"
+                                disabled
+                                helpText="Calculated automatically"
+                              />
+                            </Box>
+                            <Box minWidth="120px">
+                              <TextField
+                                label="Traffic Percentage"
+                                name="variantTrafficPercent"
+                                type="number"
+                                value={variant.trafficPercent}
+                                onChange={(value) => updateVariant(index, "trafficPercent", value)}
+                                suffix="%"
+                                min="0"
+                                max="100"
+                                step={0.1}
+                                autoComplete="off"
+                                helpText="Percentage of visitors who will see this variant"
+                              />
+                            </Box>
+                          </InlineStack>
+                        </BlockStack>
+                      </Box>
+                    ))}
+                  </BlockStack>
+
+                  {/* Traffic Allocation Warning */}
+                  <Box padding="400" background={calculateTotalTraffic() === 100 ? "bg-surface-info" : "bg-surface-critical"} borderRadius="200">
+                    <BlockStack gap="200">
+                      <Text as="p" variant="bodyMd" fontWeight="bold" tone={calculateTotalTraffic() === 100 ? "info" : "critical"}>
+                        Total traffic allocation: {calculateTotalTraffic().toFixed(0)}% - {calculateTotalTraffic() === 100 ? "Perfect!" : "Must equal 100%"}
+                      </Text>
+                      <Text as="p" variant="bodyMd" tone="subdued">
+                        Base price: {baseTrafficPercent}% | Test variants: {variants.reduce((sum, variant) => sum + parseFloat(variant.trafficPercent || "0"), 0).toFixed(0)}%
+                      </Text>
+                    </BlockStack>
+                  </Box>
 
                   {/* Hidden inputs for form submission */}
+                  <input type="hidden" name="testType" value={testType} />
                   {testType === "single" ? (
                     <>
                       <input type="hidden" name="productId" value={selectedProduct} />
@@ -341,181 +493,6 @@ export default function NewTest() {
                       ))}
                     </>
                   )}
-                </BlockStack>
-              </Card>
-            </Layout.Section>
-
-            <Layout.Section>
-              <Card>
-                <BlockStack gap="400">
-                  <Text as="h2" variant="headingMd">
-                    Price & Traffic Distribution
-                  </Text>
-
-                  <Box padding="400" background="bg-surface-secondary" borderRadius="200">
-                    <BlockStack gap="300">
-                      <Text as="p" variant="bodyMd" fontWeight="bold">
-                        Base Price (Original) - Control Group
-                      </Text>
-                      <Text as="p" variant="bodyMd" tone="subdued">
-                        This is the current price that will be shown to a portion of your customers as the control group.
-                      </Text>
-                      <InlineStack gap="400" align="start">
-                        <Box minWidth="250px">
-                          <Text as="p" variant="bodyMd" fontWeight="bold">
-                            Current Price(s):
-                          </Text>
-                          {testType === "single" ? (
-                            <Text as="p" variant="bodyMd">
-                              ${selectedProductData?.price || "0.00"}
-                            </Text>
-                          ) : (
-                            <BlockStack gap="100">
-                              {selectedProductsData.length > 0 ? (
-                                selectedProductsData.map((product: any) => (
-                                  <Text as="p" key={product.id} variant="bodyMd">
-                                    {product.title}: ${product.price}
-                                  </Text>
-                                ))
-                              ) : (
-                                <Text as="p" variant="bodyMd" tone="subdued">
-                                  Select products to see prices
-                                </Text>
-                              )}
-                            </BlockStack>
-                          )}
-                        </Box>
-                        <Box minWidth="150px">
-                          <TextField
-                            label="Traffic %"
-                            name="baseTrafficPercent"
-                            type="number"
-                            value={baseTrafficPercent}
-                            onChange={setBaseTrafficPercent}
-                            suffix="%"
-                            min="0"
-                            max="100"
-                            step={0.1}
-                            autoComplete="off"
-                            helpText="Percentage of traffic to see original price"
-                          />
-                        </Box>
-                      </InlineStack>
-                    </BlockStack>
-                  </Box>
-
-                  <Divider />
-
-                  <BlockStack gap="300">
-                    <InlineStack align="space-between">
-                      <BlockStack gap="100">
-                        <Text as="h3" variant="headingMd">
-                          Price Variants
-                        </Text>
-                        <Text as="p" variant="bodyMd" tone="subdued">
-                          Create 2-3 different price variants to test (recommended)
-                        </Text>
-                      </BlockStack>
-                      <Button 
-                        onClick={addVariant} 
-                        size="slim"
-                        disabled={variants.length >= 3}
-                      >
-                        Add Variant {variants.length >= 3 ? "(Max 3)" : ""}
-                      </Button>
-                    </InlineStack>
-
-                    {variants.map((variant, index) => (
-                      <Box key={index} padding="300" background="bg-surface-secondary" borderRadius="200">
-                        <BlockStack gap="200">
-                          <InlineStack gap="300" align="start">
-                            <Box minWidth="200px">
-                              <TextField
-                                label="Variant Name"
-                                name="variantName"
-                                value={variant.name}
-                                onChange={(value) => updateVariant(index, "name", value)}
-                                placeholder="e.g., 10% Off, Premium Price"
-                                autoComplete="off"
-                                helpText="Give this variant a descriptive name"
-                              />
-                            </Box>
-                            <Box minWidth="120px">
-                              <TextField
-                                label="New Price"
-                                name="variantPrice"
-                                type="number"
-                                value={variant.price}
-                                onChange={(value) => updateVariant(index, "price", value)}
-                                prefix="$"
-                                step={0.01}
-                                autoComplete="off"
-                                helpText="Set the test price"
-                              />
-                            </Box>
-                            <Box minWidth="120px">
-                              <TextField
-                                label="Discount Amount"
-                                name="variantDiscount"
-                                type="number"
-                                value={variant.discount}
-                                onChange={(value) => updateVariant(index, "discount", value)}
-                                prefix="$"
-                                step={0.01}
-                                autoComplete="off"
-                                helpText="Optional discount"
-                              />
-                            </Box>
-                            <Box minWidth="120px">
-                              <TextField
-                                label="Traffic %"
-                                name="variantTrafficPercent"
-                                type="number"
-                                value={variant.trafficPercent}
-                                onChange={(value) => updateVariant(index, "trafficPercent", value)}
-                                suffix="%"
-                                min="0"
-                                max="100"
-                                step={0.1}
-                                autoComplete="off"
-                                helpText="Traffic allocation"
-                              />
-                            </Box>
-                            <Button
-                              onClick={() => removeVariant(index)}
-                              variant="tertiary"
-                              tone="critical"
-                              size="slim"
-                            >
-                              Remove
-                            </Button>
-                          </InlineStack>
-                        </BlockStack>
-                      </Box>
-                    ))}
-                  </BlockStack>
-
-                  <Box padding="400" background={calculateTotalTraffic() === 100 ? "bg-surface-success" : "bg-surface-critical"} borderRadius="200">
-                    <BlockStack gap="200">
-                      <InlineStack align="space-between">
-                        <Text as="p" variant="bodyMd" fontWeight="bold">
-                          Total Traffic Distribution:
-                        </Text>
-                        <Text as="p" variant="bodyMd" fontWeight="bold" tone={calculateTotalTraffic() === 100 ? "success" : "critical"}>
-                          {calculateTotalTraffic().toFixed(1)}%
-                        </Text>
-                      </InlineStack>
-                      {calculateTotalTraffic() === 100 ? (
-                        <Text as="p" variant="bodyMd" tone="success">
-                          ✅ Perfect! All traffic is allocated correctly.
-                        </Text>
-                      ) : (
-                        <Text as="p" variant="bodyMd" tone="critical">
-                          ⚠️ Traffic distribution must equal exactly 100%. Currently at {calculateTotalTraffic().toFixed(1)}%
-                        </Text>
-                      )}
-                    </BlockStack>
-                  </Box>
                 </BlockStack>
               </Card>
             </Layout.Section>
