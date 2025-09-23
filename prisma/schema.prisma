@@ -28,6 +28,7 @@ model Session {
 model ABTest {
   id                  Int             @id @default(autoincrement())
   title               String
+  description         String?
   shop                String
   testType            String
   status              String          @default("draft")

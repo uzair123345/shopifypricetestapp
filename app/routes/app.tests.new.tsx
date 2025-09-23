@@ -70,11 +70,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const testType = formData.get("testType") as string;
   const title = formData.get("title") as string;
+  const description = formData.get("description") as string;
   const baseTrafficPercent = parseFloat(formData.get("baseTrafficPercent") as string);
   
   // Get variant data
   const variantNames = formData.getAll("variantName") as string[];
-  const variantPrices = formData.getAll("variantPrice") as string[];
   const variantDiscounts = formData.getAll("variantDiscount") as string[];
   const variantTrafficPercents = formData.getAll("variantTrafficPercent") as string[];
 
@@ -94,6 +94,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json({ error: "Please select at least one product" }, { status: 400 });
   }
 
+  if (!title || title.trim() === "") {
+    return json({ error: "Test name is required" }, { status: 400 });
+  }
+
   try {
     // Calculate average base price for multiple products
     const basePrice = productPrices.length > 0 
@@ -104,6 +108,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const abTest = await db.aBTest.create({
       data: {
         title,
+        description: description || null,
         shop: session.shop,
         testType,
         basePrice,
@@ -130,15 +135,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     // Add variants
     for (let i = 0; i < variantNames.length; i++) {
-      if (variantNames[i] && variantPrices[i]) {
+      if (variantNames[i] && variantDiscounts[i]) {
+        // Calculate the final price based on discount percentage
+        const baseProductPrice = parseFloat(productPrices[0] || "0"); // Use first product's price for calculation
+        const discountPercent = parseFloat(variantDiscounts[i]);
+        const finalPrice = baseProductPrice - (baseProductPrice * discountPercent / 100);
+
         await db.aBTestVariant.create({
           data: {
             abTestId: abTest.id,
             variantName: variantNames[i],
-            price: parseFloat(variantPrices[i]),
-            discount: variantDiscounts[i] ? parseFloat(variantDiscounts[i]) : null,
+            price: finalPrice,
+            discount: discountPercent,
             trafficPercent: parseFloat(variantTrafficPercents[i]),
-            isBaseVariant: false,
+            isBaseVariant: i === 0, // First variant is the base/control variant
           },
         });
       }
@@ -146,6 +156,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     return redirect(`/app/tests/${abTest.id}`);
   } catch (error) {
+    console.error("Error creating test:", error);
     return json({ error: "Failed to create test" }, { status: 500 });
   }
 };
