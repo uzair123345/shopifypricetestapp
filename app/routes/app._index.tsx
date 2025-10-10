@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { useFetcher, Link as RemixLink, useLoaderData, useLocation } from "@remix-run/react";
+import { useFetcher, Link as RemixLink, useLoaderData, useLocation, useNavigate } from "@remix-run/react";
 import {
   Page,
   Layout,
@@ -133,6 +133,7 @@ export default function Index() {
   const { stats } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const location = useLocation();
+  const navigate = useNavigate();
 
   const shopify = useAppBridge();
   const isLoading =
@@ -148,6 +149,13 @@ export default function Index() {
       shopify.toast.show("Product created");
     }
   }, [productId, shopify]);
+
+  const handleCreateTest = () => {
+    // Preserve the current search params (shop, host, etc.) for embedded app context
+    const currentParams = new URLSearchParams(location.search);
+    const createUrl = `/app/tests?create=true${currentParams.toString() ? `&${currentParams.toString()}` : ""}`;
+    navigate(createUrl);
+  };
 
   return (
     <Page>
@@ -199,7 +207,7 @@ export default function Index() {
                 <Button
                   variant="primary"
                   size="large"
-                  url={`/app/tests/create${location.search}`}
+                  onClick={handleCreateTest}
                 >
                   Create Your First Test
                 </Button>
@@ -227,7 +235,7 @@ export default function Index() {
                           </Text>
                         </BlockStack>
                       </InlineStack>
-                      <Button variant="secondary" url="/app/tests">
+                      <Button variant="secondary" onClick={() => navigate(`/app/tests${location.search || ""}`)}>
                         View Tests
                       </Button>
                     </BlockStack>
@@ -250,7 +258,7 @@ export default function Index() {
                           </Text>
                         </BlockStack>
                       </InlineStack>
-                      <Button variant="secondary" url="/app/analytics">
+                      <Button variant="secondary" onClick={() => navigate(`/app/analytics${location.search || ""}`)}>
                         View Analytics
                       </Button>
                     </BlockStack>
@@ -273,7 +281,7 @@ export default function Index() {
                           </Text>
                         </BlockStack>
                       </InlineStack>
-                      <Button variant="secondary" url="/app/products">
+                      <Button variant="secondary" onClick={() => navigate(`/app/products${location.search || ""}`)}>
                         View Products
                       </Button>
                     </BlockStack>
