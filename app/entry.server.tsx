@@ -8,6 +8,9 @@ import {
 import { isbot } from "isbot";
 import { addDocumentResponseHeaders } from "./shopify.server";
 
+// Start the auto-rotation scheduler
+import "./startup.server";
+
 export const streamTimeout = 5000;
 
 export default async function handleRequest(

@@ -111,13 +111,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const testType = formData.get("testType") as string;
   const title = formData.get("title") as string;
   const description = formData.get("description") as string;
-  const baseTrafficPercent = parseFloat(formData.get("baseTrafficPercent") as string);
   
-  // Get variant data
-  const variantNames = formData.getAll("variantName") as string[];
-  const variantDiscounts = formData.getAll("variantDiscount") as string[];
-  const variantTrafficPercents = formData.getAll("variantTrafficPercent") as string[];
-
   // Get product data
   const productIds = formData.getAll("productId") as string[];
   const productTitles = formData.getAll("productTitle") as string[];
@@ -125,11 +119,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const productPrices = formData.getAll("productPrice") as string[];
 
   // Validation
-  const totalTraffic = baseTrafficPercent + variantTrafficPercents.reduce((sum, percent) => sum + parseFloat(percent), 0);
-  if (Math.abs(totalTraffic - 100) > 0.01) {
-    return json({ error: "Total traffic percentage must equal 100%" }, { status: 400 });
-  }
-
   if (productIds.length === 0) {
     return json({ error: "Please select at least one product" }, { status: 400 });
   }
@@ -144,6 +133,44 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       ? productPrices.reduce((sum, price) => sum + parseFloat(price), 0) / productPrices.length
       : 0;
 
+    // For multiple product tests, validate each product's traffic allocation
+    if (testType === "multiple") {
+      for (let i = 0; i < productIds.length; i++) {
+        const productId = productIds[i];
+        const productBaseTraffic = parseFloat(formData.get(`productConfig_${productId}_baseTraffic`) as string || "0");
+        
+        // Get variants for this specific product
+        const productVariantNames: string[] = [];
+        const productVariantDiscounts: string[] = [];
+        const productVariantTrafficPercents: string[] = [];
+        
+        let variantIndex = 0;
+        while (formData.get(`productConfig_${productId}_variantName_${variantIndex}`)) {
+          productVariantNames.push(formData.get(`productConfig_${productId}_variantName_${variantIndex}`) as string);
+          productVariantDiscounts.push(formData.get(`productConfig_${productId}_variantDiscount_${variantIndex}`) as string);
+          productVariantTrafficPercents.push(formData.get(`productConfig_${productId}_variantTrafficPercent_${variantIndex}`) as string);
+          variantIndex++;
+        }
+        
+        // Validate traffic allocation for this product
+        const productTotalTraffic = productBaseTraffic + productVariantTrafficPercents.reduce((sum, percent) => sum + parseFloat(percent || "0"), 0);
+        if (Math.abs(productTotalTraffic - 100) > 0.01) {
+          return json({ error: `Total traffic percentage for ${productTitles[i]} must equal 100%` }, { status: 400 });
+        }
+      }
+    } else {
+      // Single product validation (existing logic)
+      const baseTrafficPercent = parseFloat(formData.get("baseTrafficPercent") as string);
+      const variantNames = formData.getAll("variantName") as string[];
+      const variantDiscounts = formData.getAll("variantDiscount") as string[];
+      const variantTrafficPercents = formData.getAll("variantTrafficPercent") as string[];
+      
+      const totalTraffic = baseTrafficPercent + variantTrafficPercents.reduce((sum, percent) => sum + parseFloat(percent), 0);
+      if (Math.abs(totalTraffic - 100) > 0.01) {
+        return json({ error: "Total traffic percentage must equal 100%" }, { status: 400 });
+      }
+    }
+
     // Create the test
     const abTest = await db.aBTest.create({
       data: {
@@ -152,7 +179,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         shop: session.shop,
         testType,
         basePrice,
-        baseTrafficPercent,
+        baseTrafficPercent: testType === "multiple" ? 0 : parseFloat(formData.get("baseTrafficPercent") as string), // For multiple products, we'll store individual per-product values
         totalTrafficPercent: 100,
         status: "draft",
       },
@@ -173,24 +200,71 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
     }
 
-    // Add variants
-    for (let i = 0; i < variantNames.length; i++) {
-      if (variantNames[i] && variantDiscounts[i]) {
-        // Calculate the final price based on discount percentage
-        const baseProductPrice = parseFloat(productPrices[0] || "0"); // Use first product's price for calculation
-        const discountPercent = parseFloat(variantDiscounts[i]);
-        const finalPrice = baseProductPrice - (baseProductPrice * discountPercent / 100);
 
-        await db.aBTestVariant.create({
-          data: {
-            abTestId: abTest.id,
-            variantName: variantNames[i],
-            price: finalPrice,
-            discount: discountPercent,
-            trafficPercent: parseFloat(variantTrafficPercents[i]),
-            isBaseVariant: i === 0, // First variant is the base/control variant
-          },
-        });
+    // Add variants for each product
+    if (testType === "multiple") {
+      // Multiple products - each product has its own variants
+      for (let i = 0; i < productIds.length; i++) {
+        const productId = productIds[i];
+        const productPrice = parseFloat(productPrices[i] || "0");
+        const productBaseTraffic = parseFloat(formData.get(`productConfig_${productId}_baseTraffic`) as string || "0");
+        
+        // Create the test variants for this specific product (no base variant needed)
+        let variantIndex = 0;
+        while (formData.get(`productConfig_${productId}_variantName_${variantIndex}`)) {
+          const variantName = formData.get(`productConfig_${productId}_variantName_${variantIndex}`) as string;
+          const variantDiscount = parseFloat(formData.get(`productConfig_${productId}_variantDiscount_${variantIndex}`) as string);
+          const variantTrafficPercent = parseFloat(formData.get(`productConfig_${productId}_variantTrafficPercent_${variantIndex}`) as string);
+          
+          // Calculate the final price based on discount percentage for THIS specific product
+          const finalPrice = productPrice - (productPrice * variantDiscount / 100);
+
+          await db.aBTestVariant.create({
+            data: {
+              abTestId: abTest.id,
+              variantName,
+              price: finalPrice,
+              discount: variantDiscount,
+              trafficPercent: variantTrafficPercent,
+              isBaseVariant: false, // Test variants are not base variants
+              variantProductId: productId,
+            },
+          });
+          
+          variantIndex++;
+        }
+      }
+    } else {
+      // Single product - create base variant first, then test variants
+      const variantNames = formData.getAll("variantName") as string[];
+      const variantDiscounts = formData.getAll("variantDiscount") as string[];
+      const variantTrafficPercents = formData.getAll("variantTrafficPercent") as string[];
+      const baseTrafficPercent = parseFloat(formData.get("baseTrafficPercent") as string);
+      
+      for (let productIndex = 0; productIndex < productIds.length; productIndex++) {
+        const productPrice = parseFloat(productPrices[productIndex] || "0");
+        const productId = productIds[productIndex];
+        
+        // Create the test variants for this product (no base variant needed)
+        for (let variantIndex = 0; variantIndex < variantNames.length; variantIndex++) {
+          if (variantNames[variantIndex] && variantDiscounts[variantIndex]) {
+            // Calculate the final price based on discount percentage for THIS specific product
+            const discountPercent = parseFloat(variantDiscounts[variantIndex]);
+            const finalPrice = productPrice - (productPrice * discountPercent / 100);
+
+            await db.aBTestVariant.create({
+              data: {
+                abTestId: abTest.id,
+                variantName: variantNames[variantIndex],
+                price: finalPrice,
+                discount: discountPercent,
+                trafficPercent: parseFloat(variantTrafficPercents[variantIndex]),
+                isBaseVariant: false, // Test variants are not base variants
+                variantProductId: productId,
+              },
+            });
+          }
+        }
       }
     }
 
@@ -224,18 +298,36 @@ export default function ActiveTests() {
   // Check if we're in create mode
   const isCreateMode = searchParams.get("create") === "true";
   const selectedType = searchParams.get("type");
+  const preselectedProductId = searchParams.get("productId");
+  
+  // Use URL parameter directly for test type (more reliable than state)
+  const testType = selectedType || "single";
   
   // Form state
-  const [testType, setTestType] = useState(selectedType || "single");
   const [testName, setTestName] = useState("");
   const [testDescription, setTestDescription] = useState("");
-  const [selectedProduct, setSelectedProduct] = useState("");
+  const [selectedProduct, setSelectedProduct] = useState(preselectedProductId || "");
   const [selectedProducts, setSelectedProducts] = useState<string[]>([]);
-  const [baseTrafficPercent, setBaseTrafficPercent] = useState("50");
-  const [variants, setVariants] = useState([
-    { name: "Control (Original Price)", discount: "0", trafficPercent: "25" },
-    { name: "Test Variant 1", discount: "10", trafficPercent: "25" },
-  ]);
+  const [baseTrafficPercent, setBaseTrafficPercent] = useState("34");
+  
+  // State for multiple products - each product gets its own configuration
+  const [productConfigs, setProductConfigs] = useState<Record<string, {
+    baseTrafficPercent: string;
+    variants: Array<{
+      name: string;
+      discount: string;
+      trafficPercent: string;
+    }>;
+  }>>({});
+  
+  // Default variants for single product or when adding new products
+  const defaultVariants = [
+    { name: "Test Variant 1", discount: "10", trafficPercent: "33" },
+    { name: "Test Variant 2", discount: "20", trafficPercent: "33" },
+  ];
+  
+  // For backward compatibility with single product tests
+  const [variants, setVariants] = useState(defaultVariants);
   
   
   // Form logic
@@ -247,6 +339,31 @@ export default function ActiveTests() {
     value: product.id,
   })) || [];
 
+  // Helper functions for managing individual product configurations
+  const getProductConfig = (productId: string) => {
+    return productConfigs[productId] || {
+      baseTrafficPercent: "34",
+      variants: [...defaultVariants]
+    };
+  };
+
+  const updateProductConfig = (productId: string, updates: Partial<{
+    baseTrafficPercent: string;
+    variants: Array<{
+      name: string;
+      discount: string;
+      trafficPercent: string;
+    }>;
+  }>) => {
+    setProductConfigs(prev => ({
+      ...prev,
+      [productId]: {
+        ...getProductConfig(productId),
+        ...updates
+      }
+    }));
+  };
+
   const handleProductSelection = (productId: string) => {
     if (testType === "single") {
       setSelectedProduct(productId);
@@ -255,14 +372,13 @@ export default function ActiveTests() {
         setSelectedProducts(selectedProducts.filter(id => id !== productId));
       } else {
         setSelectedProducts([...selectedProducts, productId]);
+        // Initialize config for newly selected products
+        updateProductConfig(productId, {
+          baseTrafficPercent: "34",
+          variants: [...defaultVariants]
+        });
       }
     }
-  };
-
-  const handleTestTypeChange = (newTestType: string) => {
-    setTestType(newTestType);
-    setSelectedProduct("");
-    setSelectedProducts([]);
   };
 
   const updateVariant = (index: number, field: string, value: string) => {
@@ -272,11 +388,39 @@ export default function ActiveTests() {
   };
 
   const addVariant = () => {
-    setVariants([...variants, { name: `Test Variant ${variants.length}`, discount: "0", trafficPercent: "0" }]);
+    setVariants([...variants, { name: `Test Variant ${variants.length + 1}`, discount: "0", trafficPercent: "0" }]);
   };
 
   const removeVariant = (index: number) => {
     setVariants(variants.filter((_, i) => i !== index));
+  };
+
+  // Functions for managing variants per product (for multiple product tests)
+  const addVariantForProduct = (productId: string) => {
+    const config = getProductConfig(productId);
+    const newVariants = [...config.variants, { 
+      name: `Test Variant ${config.variants.length + 1}`, 
+      discount: "0", 
+      trafficPercent: "0" 
+    }];
+    updateProductConfig(productId, { variants: newVariants });
+  };
+
+  const removeVariantForProduct = (productId: string, index: number) => {
+    const config = getProductConfig(productId);
+    const newVariants = config.variants.filter((_, i) => i !== index);
+    updateProductConfig(productId, { variants: newVariants });
+  };
+
+  const updateVariantForProduct = (productId: string, index: number, field: string, value: string) => {
+    const config = getProductConfig(productId);
+    const newVariants = [...config.variants];
+    newVariants[index] = { ...newVariants[index], [field]: value };
+    updateProductConfig(productId, { variants: newVariants });
+  };
+
+  const updateBaseTrafficForProduct = (productId: string, value: string) => {
+    updateProductConfig(productId, { baseTrafficPercent: value });
   };
 
   const calculateTotalTraffic = () => {
@@ -304,8 +448,12 @@ export default function ActiveTests() {
 
   // If in create mode, show the create page
   if (isCreateMode) {
-    // If no type selected, show test type selection
-    if (!selectedType) {
+    // Check if we have a preselected product from Products page
+    const preselectedProductId = searchParams.get("productId");
+    const preselectedProductTitle = searchParams.get("productTitle");
+    
+    // If no type selected and no preselected product, show test type selection
+    if (!selectedType && !preselectedProductId) {
       return (
         <Page>
           <TitleBar title="Create A/B Test" />
@@ -350,16 +498,47 @@ export default function ActiveTests() {
       );
     }
 
-    // If type is selected, show the form
+    // If type is selected or product is preselected, show the form
     return (
-      <Page>
-        <TitleBar title="Create A/B Test" />
+      <Page
+        backAction={{
+          content: 'Products',
+          onAction: () => navigate(`/app/products${location.search || ""}`)
+        }}
+      >
+        <TitleBar title={
+          preselectedProductTitle 
+            ? `Create Test for ${preselectedProductTitle}` 
+            : testType === "single" 
+              ? "Create Single Product Test" 
+              : "Create Multiple Products Test"
+        } />
         <BlockStack gap="500">
           {actionData?.error && (
             <Banner tone="critical">
               <p>{actionData.error}</p>
             </Banner>
           )}
+          
+          {/* Dynamic heading based on test type */}
+          <Card>
+            <BlockStack gap="200">
+              <Text as="h1" variant="headingLg">
+                {preselectedProductTitle 
+                  ? `Create Test for ${preselectedProductTitle}` 
+                  : testType === "single" 
+                    ? "Single Product Test" 
+                    : "Multiple Products Test"}
+              </Text>
+              <Text variant="bodyMd" tone="subdued">
+                {preselectedProductTitle 
+                  ? "Configure pricing variants for this specific product"
+                  : testType === "single" 
+                    ? "Test different prices for one product to find the optimal pricing"
+                    : "Test prices across multiple products simultaneously"}
+              </Text>
+            </BlockStack>
+          </Card>
           
           <Form method="post">
             <Card>
@@ -389,40 +568,24 @@ export default function ActiveTests() {
                   />
                 </BlockStack>
 
-              <Divider />
-
-              {/* Test Type Section */}
-              <BlockStack gap="300">
-                <Text as="h3" variant="headingMd">Test Type</Text>
-                <BlockStack gap="200">
-                  <InlineStack gap="200" align="start">
-                    <RadioButton
-                      label="Single Product Test"
-                      checked={testType === "single"}
-                      id="single"
-                      name="testType"
-                      onChange={() => handleTestTypeChange("single")}
-                    />
-                  </InlineStack>
-                  <InlineStack gap="200" align="start">
-                    <RadioButton
-                      label="Multiple Products Test"
-                      checked={testType === "multiple"}
-                      id="multiple"
-                      name="testType"
-                      onChange={() => handleTestTypeChange("multiple")}
-                    />
-                  </InlineStack>
-                </BlockStack>
-              </BlockStack>
-
-              <Divider />
 
               {/* Product Selection Section */}
               <BlockStack gap="300">
                 <Text as="h3" variant="headingMd">Product Selection</Text>
                 
-                {testType === "single" ? (
+                {preselectedProductId ? (
+                  /* Show preselected product */
+                  <Box padding="300" background="bg-surface-success-subdued" borderRadius="200">
+                    <BlockStack gap="200">
+                      <Text as="p" variant="bodyMd" fontWeight="bold">
+                        Selected Product: {preselectedProductTitle}
+                      </Text>
+                      <Text as="p" variant="bodyMd" tone="subdued">
+                        Base Price: ${products.find(p => p.id === preselectedProductId)?.price || "0.00"}
+                      </Text>
+                    </BlockStack>
+                  </Box>
+                ) : testType === "single" ? (
                   <>
                     <Select
                       label="Product"
@@ -487,19 +650,6 @@ export default function ActiveTests() {
                         ))}
                       </BlockStack>
                     </Box>
-
-                    <TextField
-                      label="Base Price Traffic Percentage"
-                      type="number"
-                      value={baseTrafficPercent}
-                      onChange={setBaseTrafficPercent}
-                      suffix="%"
-                      min="0"
-                      max="100"
-                      step={0.1}
-                      autoComplete="off"
-                      helpText="Percentage of visitors who will see the original price"
-                    />
                   </>
                 )}
               </BlockStack>
@@ -509,7 +659,9 @@ export default function ActiveTests() {
               {/* Test Variants Section */}
               <BlockStack gap="300">
                 <InlineStack align="space-between">
-                  <Text as="h3" variant="headingMd">Test Variants</Text>
+                  <Text as="h3" variant="headingMd">
+                    {testType === "multiple" ? "Test Variants (Per Product)" : "Test Variants"}
+                  </Text>
                   <Button 
                     onClick={addVariant} 
                     size="slim"
@@ -519,88 +671,225 @@ export default function ActiveTests() {
                   </Button>
                 </InlineStack>
 
-                {variants.map((variant, index) => (
-                  <Box key={index} padding="400" background="bg-surface-secondary" borderRadius="200">
-                    <BlockStack gap="300">
-                      <InlineStack align="space-between">
-                        <Text as="h4" variant="headingSm">Variant {index + 1}</Text>
-                        {index > 0 && (
-                          <Button
-                            onClick={() => removeVariant(index)}
-                            variant="tertiary"
-                            tone="critical"
-                            size="slim"
-                          >
-                            Remove
-                          </Button>
-                        )}
-                      </InlineStack>
+                {testType === "multiple" && selectedProductsData.length > 0 ? (
+                  /* Multiple products - show separate config for each product */
+                  <BlockStack gap="400">
+                    {selectedProductsData.map((product: any) => {
+                      const productConfig = getProductConfig(product.id);
+                      return (
+                        <Card key={product.id}>
+                          <BlockStack gap="300">
+                            <InlineStack align="space-between">
+                              <BlockStack gap="200">
+                                <Text as="h4" variant="headingMd" fontWeight="bold">
+                                  {product.title} - ${product.price}
+                                </Text>
+                                <Text as="p" variant="bodyMd" tone="subdued">
+                                  Configure test variants specifically for this product
+                                </Text>
+                              </BlockStack>
+                              <Button 
+                                onClick={() => addVariantForProduct(product.id)} 
+                                size="slim"
+                                disabled={productConfig.variants.length >= 5}
+                              >
+                                Add Variant
+                              </Button>
+                            </InlineStack>
+                            
+                            <TextField
+                              label="Base Price Traffic Percentage"
+                              type="number"
+                              value={productConfig.baseTrafficPercent}
+                              onChange={(value) => updateBaseTrafficForProduct(product.id, value)}
+                              suffix="%"
+                              min="0"
+                              max="100"
+                              step={0.1}
+                              autoComplete="off"
+                              helpText="Percentage of visitors who will see the original price for this product"
+                            />
 
-                      <InlineStack gap="300" align="start">
-                        <Box minWidth="200px">
-                          <TextField
-                            label="Variant Name"
-                            value={variant.name}
-                            onChange={(value) => updateVariant(index, "name", value)}
-                            autoComplete="off"
-                          />
-                        </Box>
-                        <Box minWidth="120px">
-                          <TextField
-                            label="Discount %"
-                            type="number"
-                            value={variant.discount}
-                            onChange={(value) => updateVariant(index, "discount", value)}
-                            suffix="%"
-                            min="0"
-                            max="100"
-                            step={0.1}
-                            autoComplete="off"
-                          />
-                        </Box>
-                        <Box minWidth="120px">
-                          <TextField
-                            label="Final Price ($)"
-                            type="number"
-                            value={selectedProductData ? calculateFinalPrice(parseFloat(selectedProductData.price), parseFloat(variant.discount || "0")).toFixed(2) : "0.00"}
-                            prefix="$"
-                            step={0.01}
-                            autoComplete="off"
-                            disabled
-                            helpText="Calculated automatically"
-                          />
-                        </Box>
-                        <Box minWidth="120px">
-                          <TextField
-                            label="Traffic Percentage"
-                            type="number"
-                            value={variant.trafficPercent}
-                            onChange={(value) => updateVariant(index, "trafficPercent", value)}
-                            suffix="%"
-                            min="0"
-                            max="100"
-                            step={0.1}
-                            autoComplete="off"
-                            helpText="Percentage of visitors who will see this variant"
-                          />
-                        </Box>
-                      </InlineStack>
-                    </BlockStack>
-                  </Box>
-                ))}
+                            {productConfig.variants.map((variant, index) => (
+                              <Box key={index} padding="400" background="bg-surface-secondary" borderRadius="200">
+                                <BlockStack gap="300">
+                                  <InlineStack align="space-between">
+                                    <Text as="h5" variant="headingSm">Variant {index + 1}</Text>
+                                    {index > 0 && (
+                                      <Button
+                                        onClick={() => removeVariantForProduct(product.id, index)}
+                                        variant="tertiary"
+                                        tone="critical"
+                                        size="slim"
+                                      >
+                                        Remove
+                                      </Button>
+                                    )}
+                                  </InlineStack>
+
+                                  <InlineStack gap="300" align="start">
+                                    <Box minWidth="200px">
+                                      <TextField
+                                        label="Variant Name"
+                                        value={variant.name}
+                                        onChange={(value) => updateVariantForProduct(product.id, index, "name", value)}
+                                        autoComplete="off"
+                                      />
+                                    </Box>
+                                    <Box minWidth="120px">
+                                      <TextField
+                                        label="Discount %"
+                                        type="number"
+                                        value={variant.discount}
+                                        onChange={(value) => updateVariantForProduct(product.id, index, "discount", value)}
+                                        suffix="%"
+                                        min="0"
+                                        max="100"
+                                        step={0.1}
+                                        autoComplete="off"
+                                      />
+                                    </Box>
+                                    <Box minWidth="150px">
+                                      <TextField
+                                        label="Final Price ($)"
+                                        value={`$${calculateFinalPrice(parseFloat(product.price), parseFloat(variant.discount || "0")).toFixed(2)}`}
+                                        disabled
+                                        helpText="Calculated automatically"
+                                      />
+                                    </Box>
+                                    <Box minWidth="120px">
+                                      <TextField
+                                        label="Traffic Percentage"
+                                        type="number"
+                                        value={variant.trafficPercent}
+                                        onChange={(value) => updateVariantForProduct(product.id, index, "trafficPercent", value)}
+                                        suffix="%"
+                                        min="0"
+                                        max="100"
+                                        step={0.1}
+                                        autoComplete="off"
+                                        helpText="Percentage of visitors who will see this variant"
+                                      />
+                                    </Box>
+                                  </InlineStack>
+                                </BlockStack>
+                              </Box>
+                            ))}
+                          </BlockStack>
+                        </Card>
+                      );
+                    })}
+                  </BlockStack>
+                ) : (
+                  /* Single product - show standard config */
+                  variants.map((variant, index) => (
+                    <Box key={index} padding="400" background="bg-surface-secondary" borderRadius="200">
+                      <BlockStack gap="300">
+                        <InlineStack align="space-between">
+                          <Text as="h4" variant="headingSm">Variant {index + 1}</Text>
+                          {index > 0 && (
+                            <Button
+                              onClick={() => removeVariant(index)}
+                              variant="tertiary"
+                              tone="critical"
+                              size="slim"
+                            >
+                              Remove
+                            </Button>
+                          )}
+                        </InlineStack>
+
+                        <InlineStack gap="300" align="start">
+                          <Box minWidth="200px">
+                            <TextField
+                              label="Variant Name"
+                              value={variant.name}
+                              onChange={(value) => updateVariant(index, "name", value)}
+                              autoComplete="off"
+                            />
+                          </Box>
+                          <Box minWidth="120px">
+                            <TextField
+                              label="Discount %"
+                              type="number"
+                              value={variant.discount}
+                              onChange={(value) => updateVariant(index, "discount", value)}
+                              suffix="%"
+                              min="0"
+                              max="100"
+                              step={0.1}
+                              autoComplete="off"
+                            />
+                          </Box>
+                          <Box minWidth="120px">
+                            <TextField
+                              label="Final Price ($)"
+                              type="number"
+                              value={selectedProductData ? calculateFinalPrice(parseFloat(selectedProductData.price), parseFloat(variant.discount || "0")).toFixed(2) : "0.00"}
+                              prefix="$"
+                              step={0.01}
+                              autoComplete="off"
+                              disabled
+                              helpText="Calculated automatically"
+                            />
+                          </Box>
+                          <Box minWidth="120px">
+                            <TextField
+                              label="Traffic Percentage"
+                              type="number"
+                              value={variant.trafficPercent}
+                              onChange={(value) => updateVariant(index, "trafficPercent", value)}
+                              suffix="%"
+                              min="0"
+                              max="100"
+                              step={0.1}
+                              autoComplete="off"
+                              helpText="Percentage of visitors who will see this variant"
+                            />
+                          </Box>
+                        </InlineStack>
+                      </BlockStack>
+                    </Box>
+                  ))
+                )}
               </BlockStack>
 
               {/* Traffic Allocation Warning */}
-              <Box padding="400" background={calculateTotalTraffic() === 100 ? "bg-surface-secondary" : "bg-surface-critical"} borderRadius="200">
-                <BlockStack gap="200">
-                  <Text as="p" variant="bodyMd" fontWeight="bold" tone={calculateTotalTraffic() === 100 ? "success" : "critical"}>
-                    Total traffic allocation: {calculateTotalTraffic().toFixed(0)}% - {calculateTotalTraffic() === 100 ? "Perfect!" : "Must equal 100%"}
-                  </Text>
-                  <Text as="p" variant="bodyMd" tone="subdued">
-                    Base price: {baseTrafficPercent}% | Test variants: {variants.reduce((sum, variant) => sum + parseFloat(variant.trafficPercent || "0"), 0).toFixed(0)}%
-                  </Text>
+              {testType === "multiple" ? (
+                /* Multiple products - show warning for each product */
+                <BlockStack gap="300">
+                  {selectedProductsData.map((product: any) => {
+                    const productConfig = getProductConfig(product.id);
+                    const productTotalTraffic = parseFloat(productConfig.baseTrafficPercent || "0") + 
+                      productConfig.variants.reduce((sum, variant) => sum + parseFloat(variant.trafficPercent || "0"), 0);
+                    
+                    return (
+                      <Box key={product.id} padding="400" background={productTotalTraffic === 100 ? "bg-surface-secondary" : "bg-surface-critical"} borderRadius="200">
+                        <BlockStack gap="200">
+                          <Text as="p" variant="bodyMd" fontWeight="bold" tone={productTotalTraffic === 100 ? "success" : "critical"}>
+                            {product.title}: {productTotalTraffic.toFixed(0)}% - {productTotalTraffic === 100 ? "Perfect!" : "Must equal 100%"}
+                          </Text>
+                          <Text as="p" variant="bodyMd" tone="subdued">
+                            Base price: {productConfig.baseTrafficPercent}% | Test variants: {productConfig.variants.reduce((sum, variant) => sum + parseFloat(variant.trafficPercent || "0"), 0).toFixed(0)}%
+                          </Text>
+                        </BlockStack>
+                      </Box>
+                    );
+                  })}
                 </BlockStack>
-              </Box>
+              ) : (
+                /* Single product - show standard warning */
+                <Box padding="400" background={calculateTotalTraffic() === 100 ? "bg-surface-secondary" : "bg-surface-critical"} borderRadius="200">
+                  <BlockStack gap="200">
+                    <Text as="p" variant="bodyMd" fontWeight="bold" tone={calculateTotalTraffic() === 100 ? "success" : "critical"}>
+                      Total traffic allocation: {calculateTotalTraffic().toFixed(0)}% - {calculateTotalTraffic() === 100 ? "Perfect!" : "Must equal 100%"}
+                    </Text>
+                    <Text as="p" variant="bodyMd" tone="subdued">
+                      Base price: {baseTrafficPercent}% | Test variants: {variants.reduce((sum, variant) => sum + parseFloat(variant.trafficPercent || "0"), 0).toFixed(0)}%
+                    </Text>
+                  </BlockStack>
+                </Box>
+              )}
 
               {/* Action Buttons */}
               <InlineStack align="end" gap="300">
@@ -645,13 +934,33 @@ export default function ActiveTests() {
                 </>
               )}
 
-              {variants.map((variant, index) => (
-                <div key={index}>
-                  <input type="hidden" name="variantName" value={variant.name} />
-                  <input type="hidden" name="variantDiscount" value={variant.discount} />
-                  <input type="hidden" name="variantTrafficPercent" value={variant.trafficPercent} />
-                </div>
-              ))}
+              {testType === "single" ? (
+                /* Single product - submit standard variants */
+                variants.map((variant, index) => (
+                  <div key={index}>
+                    <input type="hidden" name="variantName" value={variant.name} />
+                    <input type="hidden" name="variantDiscount" value={variant.discount} />
+                    <input type="hidden" name="variantTrafficPercent" value={variant.trafficPercent} />
+                  </div>
+                ))
+              ) : (
+                /* Multiple products - submit individual configurations */
+                selectedProductsData.map((product: any) => {
+                  const productConfig = getProductConfig(product.id);
+                  return (
+                    <div key={product.id}>
+                      <input type="hidden" name={`productConfig_${product.id}_baseTraffic`} value={productConfig.baseTrafficPercent} />
+                      {productConfig.variants.map((variant, index) => (
+                        <div key={`${product.id}_${index}`}>
+                          <input type="hidden" name={`productConfig_${product.id}_variantName_${index}`} value={variant.name} />
+                          <input type="hidden" name={`productConfig_${product.id}_variantDiscount_${index}`} value={variant.discount} />
+                          <input type="hidden" name={`productConfig_${product.id}_variantTrafficPercent_${index}`} value={variant.trafficPercent} />
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })
+              )}
             </BlockStack>
           </Card>
         </Form>
@@ -661,7 +970,12 @@ export default function ActiveTests() {
   }
 
   return (
-    <Page>
+    <Page
+      backAction={{
+        content: 'Dashboard',
+        onAction: () => navigate(`/app${location.search || ""}`)
+      }}
+    >
       <TitleBar title="Active Tests" />
       <BlockStack gap="500">
         <Layout>

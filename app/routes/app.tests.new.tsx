@@ -16,20 +16,22 @@ import {
   Banner,
   Divider,
   Box,
-  RadioButton,
-  Collapsible,
+  Badge,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  console.log("🔍 app.tests.new.tsx loader called!");
+  console.log("🔍 app.tests.create.tsx loader called!");
   try {
     const { admin } = await authenticate.admin(request);
     const url = new URL(request.url);
     const selectedType = url.searchParams.get("type") === "multiple" ? "multiple" : "single";
+    const preselectedProductId = url.searchParams.get("productId");
+    const preselectedProductTitle = url.searchParams.get("productTitle");
     console.log("🔍 Selected type:", selectedType);
+    console.log("🔍 Preselected product:", preselectedProductId, preselectedProductTitle);
     
 
     // Fetch products from Shopify
@@ -68,7 +70,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     })) || [];
 
     console.log("🔍 Products loaded:", products.length);
-    return json({ products, selectedType });
+    return json({ 
+      products, 
+      selectedType, 
+      preselectedProductId, 
+      preselectedProductTitle 
+    });
   } catch (error) {
     console.error("🔍 Error in loader:", error);
     return json({ products: [], selectedType: "single", error: "Failed to load products" });
@@ -175,15 +182,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 export default function NewTest() {
   console.log("🔍 NewTest component rendering!");
   const loaderData = useLoaderData<typeof loader>();
-  const { products, selectedType, error } = loaderData;
+  const { products, selectedType, preselectedProductId, preselectedProductTitle, error } = loaderData;
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const isSubmitting = navigation.state === "submitting";
 
-  console.log("🔍 Loader data:", { products: products?.length, selectedType, error });
+  console.log("🔍 Loader data:", { products: products?.length, selectedType, preselectedProductId, preselectedProductTitle, error });
 
   const [testType, setTestType] = useState(selectedType);
-  const [selectedProduct, setSelectedProduct] = useState("");
+  const [selectedProduct, setSelectedProduct] = useState(preselectedProductId || "");
   const [selectedProducts, setSelectedProducts] = useState<string[]>([]);
   const [baseTrafficPercent, setBaseTrafficPercent] = useState("50");
   const [variants, setVariants] = useState([
@@ -209,13 +216,6 @@ export default function NewTest() {
         setSelectedProducts([...selectedProducts, productId]);
       }
     }
-  };
-
-  const handleTestTypeChange = (newTestType: string) => {
-    setTestType(newTestType);
-    // Reset selections when changing test type
-    setSelectedProduct("");
-    setSelectedProducts([]);
   };
 
   const updateVariant = (index: number, field: string, value: string) => {
@@ -286,30 +286,17 @@ export default function NewTest() {
 
                   <Divider />
 
-                  {/* Test Type Section */}
-                  <BlockStack gap="300">
-                    <Text as="h3" variant="headingMd">Test Type</Text>
-                    <BlockStack gap="200">
-                      <InlineStack gap="200" align="start">
-                        <RadioButton
-                          label="Single Product Test"
-                          checked={testType === "single"}
-                          id="single"
-                          name="testType"
-                          onChange={() => handleTestTypeChange("single")}
-                        />
-                      </InlineStack>
-                      <InlineStack gap="200" align="start">
-                        <RadioButton
-                          label="Multiple Products Test"
-                          checked={testType === "multiple"}
-                          id="multiple"
-                          name="testType"
-                          onChange={() => handleTestTypeChange("multiple")}
-                        />
-                      </InlineStack>
-                    </BlockStack>
-                  </BlockStack>
+                  {/* Test Type Heading */}
+                  <Box padding="400" background="bg-surface-info" borderRadius="200">
+                    <InlineStack gap="200" align="start">
+                      <Text as="h2" variant="headingLg">
+                        {testType === "single" ? "Single Product Test" : "Multiple Products Test"}
+                      </Text>
+                      <Badge tone="info">
+                        {testType === "single" ? "One Product" : "Multiple Products"}
+                      </Badge>
+                    </InlineStack>
+                  </Box>
 
                   <Divider />
 

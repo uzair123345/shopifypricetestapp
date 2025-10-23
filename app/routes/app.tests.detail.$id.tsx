@@ -90,80 +90,80 @@ export default function TestDetail() {
   console.log('=== TEST DETAIL COMPONENT STARTING ===');
   console.log('Current URL:', window.location.href);
   
-  const { abTest } = useLoaderData<typeof loader>();
-  const actionData = useActionData<typeof action>();
-  const navigation = useNavigation();
-  const navigate = useNavigate();
+    const { abTest } = useLoaderData<typeof loader>();
+    const actionData = useActionData<typeof action>();
+    const navigation = useNavigation();
+    const navigate = useNavigate();
 
-  const isSubmitting = navigation.state === "submitting";
+    const isSubmitting = navigation.state === "submitting";
 
-  // Debug logging
-  console.log('=== TEST DETAIL COMPONENT RENDERED ===');
-  console.log('abTest data:', abTest);
-  console.log('actionData:', actionData);
-  console.log('navigation state:', navigation.state);
+    // Debug logging
+    console.log('=== TEST DETAIL COMPONENT RENDERED ===');
+    console.log('abTest data:', abTest);
+    console.log('actionData:', actionData);
+    console.log('navigation state:', navigation.state);
 
-  if (!abTest) {
-    console.error('abTest is null or undefined!');
-    return (
-      <Page>
-        <TitleBar title="Error" />
-        <Card>
-          <Text>Test data not found!</Text>
-        </Card>
-      </Page>
-    );
-  }
+    if (!abTest) {
+      console.error('abTest is null or undefined!');
+      return (
+        <Page>
+          <TitleBar title="Error" />
+          <Card>
+            <Text>Test data not found!</Text>
+          </Card>
+        </Page>
+      );
+    }
 
   // Simple test component first
   console.log('About to render the main component');
   return (
     <Page>
       <TitleBar title="Test Detail - Working!" />
-      <Card>
+            <Card>
         <Text as="h1">SUCCESS! Test Detail Page is Working!</Text>
         <Text as="p">Test ID: {abTest.id}</Text>
         <Text as="p">Test Title: {abTest.title}</Text>
         <Text as="p">Status: {abTest.status}</Text>
-        {abTest.status === "draft" && (
-          <Form method="post">
-            <input type="hidden" name="action" value="start" />
-            <Button 
-              variant="primary" 
-              submit
-              loading={isSubmitting}
-            >
-              Start Test
-            </Button>
-          </Form>
-        )}
-        {abTest.status === "active" && (
-          <Form method="post">
-            <input type="hidden" name="action" value="pause" />
-            <Button 
-              variant="secondary" 
-              submit
-              loading={isSubmitting}
-            >
-              Pause Test
-            </Button>
-          </Form>
-        )}
-        {abTest.status === "paused" && (
-          <Form method="post">
-            <input type="hidden" name="action" value="resume" />
-            <Button 
-              variant="primary" 
-              submit
-              loading={isSubmitting}
-            >
-              Resume Test
-            </Button>
-          </Form>
-        )}
-        <Button onClick={() => navigate("/app/tests")} variant="secondary">
-          Back to Tests
-        </Button>
+                    {abTest.status === "draft" && (
+                      <Form method="post">
+                        <input type="hidden" name="action" value="start" />
+                        <Button 
+                          variant="primary" 
+                          submit
+                          loading={isSubmitting}
+                        >
+                          Start Test
+                        </Button>
+                      </Form>
+                    )}
+                    {abTest.status === "active" && (
+                      <Form method="post">
+                        <input type="hidden" name="action" value="pause" />
+                        <Button 
+                          variant="secondary" 
+                          submit
+                          loading={isSubmitting}
+                        >
+                          Pause Test
+                        </Button>
+                      </Form>
+                    )}
+                    {abTest.status === "paused" && (
+                      <Form method="post">
+                        <input type="hidden" name="action" value="resume" />
+                        <Button 
+                          variant="primary" 
+                          submit
+                          loading={isSubmitting}
+                        >
+                          Resume Test
+                        </Button>
+                      </Form>
+                    )}
+              <Button onClick={() => navigate("/app/tests")} variant="secondary">
+                Back to Tests
+              </Button>
       </Card>
     </Page>
   );

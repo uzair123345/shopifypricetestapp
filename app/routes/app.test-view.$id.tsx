@@ -1,6 +1,7 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json, redirect } from "@remix-run/node";
+import { json } from "@remix-run/node";
 import { useLoaderData, useActionData, useNavigation, Form, useNavigate } from "@remix-run/react";
+import { useState, useCallback } from "react";
 import {
   Page,
   Text,
@@ -13,10 +14,12 @@ import {
   Banner,
   DataTable,
   Box,
+  Modal,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
+import { ShopifyPriceUpdater } from "../services/shopifyPriceUpdater.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   await authenticate.admin(request);
@@ -38,15 +41,82 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   return json({ abTest });
 };
 
+// Helper function to reset prices for a specific test
+async function resetTestPrices(admin: any, session: any, testId: number) {
+  try {
+    console.log(`🔄 Resetting prices for test ${testId}`);
+    
+    // Get the test with its products
+    const test = await db.aBTest.findUnique({
+      where: { id: testId },
+      include: { products: true }
+    });
+
+    if (!test) {
+      console.log(`❌ Test ${testId} not found`);
+      return { success: false, message: "Test not found" };
+    }
+
+    const results = [];
+    const failures = [];
+
+    // Reset prices for each product in the test
+    for (const product of test.products) {
+      try {
+        const variantId = await ShopifyPriceUpdater.resolveVariantGid(admin, product.productId);
+        
+        if (!variantId) {
+          console.error(`❌ Could not resolve variant ID for product ${product.productId}`);
+          failures.push({ productId: product.productId, error: "Could not resolve variant ID" });
+          continue;
+        }
+
+        const result = await ShopifyPriceUpdater.updateProductPrice(
+          admin,
+          session.shop,
+          product.productId,
+          variantId,
+          product.basePrice
+        );
+
+        if (result.success) {
+          console.log(`✅ Reset product ${product.productId} to $${product.basePrice}`);
+          results.push({ productId: product.productId, price: product.basePrice });
+        } else {
+          console.error(`❌ Failed to reset product ${product.productId}:`, result.message);
+          failures.push({ productId: product.productId, error: result.message });
+        }
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        console.error(`❌ Error resetting product ${product.productId}:`, msg);
+        failures.push({ productId: product.productId, error: msg });
+      }
+    }
+
+    return {
+      success: failures.length === 0,
+      message: failures.length === 0 
+        ? `Successfully reset ${results.length} products` 
+        : `Reset ${results.length} products, ${failures.length} failed`,
+      results,
+      failures
+    };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error(`❌ Error resetting test ${testId}:`, msg);
+    return { success: false, message: msg };
+  }
+}
+
 export const action = async ({ request, params }: ActionFunctionArgs) => {
-  await authenticate.admin(request);
+  const { admin, session, redirect } = await authenticate.admin(request);
   
   const testId = parseInt(params.id!);
   const formData = await request.formData();
-  const action = formData.get("action") as string;
+  const actionType = formData.get("action") as string;
 
   try {
-    if (action === "start") {
+    if (actionType === "start") {
       await db.aBTest.update({
         where: { id: testId },
         data: {
@@ -54,23 +124,56 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           startedAt: new Date(),
         },
       });
-    } else if (action === "pause") {
+    } else if (actionType === "pause") {
+      // Reset prices to original values when pausing
+      console.log(`🔄 Pausing test ${testId} - resetting prices to original values`);
+      const resetResult = await resetTestPrices(admin, session, testId);
+      console.log(`Reset result:`, resetResult);
+      
       await db.aBTest.update({
         where: { id: testId },
         data: {
           status: "paused",
         },
       });
-    } else if (action === "resume") {
+    } else if (actionType === "resume") {
       await db.aBTest.update({
         where: { id: testId },
         data: {
           status: "active",
         },
       });
+    } else if (actionType === "delete") {
+      // Reset prices to original values before deleting
+      console.log(`🔄 Deleting test ${testId} - resetting prices to original values`);
+      const resetResult = await resetTestPrices(admin, session, testId);
+      console.log(`Reset result:`, resetResult);
+      
+      // Delete the test and all related data
+      await db.aBTest.delete({
+        where: { id: testId },
+      });
+      // Redirect to tests list after deletion, preserving auth context
+      const url = new URL(request.url);
+      const host = url.searchParams.get("host");
+      const shop = url.searchParams.get("shop");
+      const query = new URLSearchParams();
+      if (host) query.set("host", host);
+      if (shop) query.set("shop", shop);
+      const queryString = query.toString();
+      return redirect(`/app/tests${queryString ? `?${queryString}` : ""}`);
     }
 
-    return redirect(`/app/test-view/${testId}`);
+    // Preserve auth context for all redirects
+    const url = new URL(request.url);
+    const host = url.searchParams.get("host");
+    const shop = url.searchParams.get("shop");
+    const query = new URLSearchParams();
+    if (host) query.set("host", host);
+    if (shop) query.set("shop", shop);
+    const queryString = query.toString();
+    
+    return redirect(`/app/test-view/${testId}${queryString ? `?${queryString}` : ""}`);
   } catch (error) {
     console.error("Error updating test:", error);
     return json({ error: "Failed to update test" }, { status: 500 });
@@ -84,6 +187,24 @@ export default function TestView() {
   const navigate = useNavigate();
 
   const isSubmitting = navigation.state === "submitting";
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+
+  const handleDeleteClick = useCallback(() => {
+    setShowDeleteModal(true);
+  }, []);
+
+  const handleDeleteCancel = useCallback(() => {
+    setShowDeleteModal(false);
+  }, []);
+
+  const handleDeleteConfirm = useCallback(() => {
+    setShowDeleteModal(false);
+    // Submit the hidden form
+    const form = document.getElementById('delete-form') as HTMLFormElement;
+    if (form) {
+      form.submit();
+    }
+  }, []);
 
   if (!abTest) {
     return (
@@ -163,6 +284,13 @@ export default function TestView() {
                         </Button>
                       </Form>
                     )}
+                    <Button
+                      variant="critical"
+                      onClick={handleDeleteClick}
+                      destructive
+                    >
+                      Delete Test
+                    </Button>
                   </InlineStack>
                 </InlineStack>
               </BlockStack>
@@ -170,65 +298,156 @@ export default function TestView() {
           </Layout.Section>
         </Layout>
 
-        <Layout>
-          <Layout.Section>
-            <Card>
-              <BlockStack gap="400">
-                <Text as="h2" variant="headingMd">Test Details</Text>
+        {abTest.testType === "multiple" ? (
+          // Multiple product test - show each product separately
+          <BlockStack gap="400">
+            {abTest.products.map((product, productIndex) => {
+              // Get variants for this specific product
+              const productVariants = abTest.variants.filter(variant => variant.variantProductId === product.productId);
+              
+              // Find the base variant (original price) for this product
+              const baseVariant = productVariants.find(variant => variant.isBaseVariant);
+              const testVariants = productVariants.filter(variant => !variant.isBaseVariant);
+              
+              return (
+                <Layout key={product.id}>
+                  <Layout.Section>
+                    <Card>
+                      <BlockStack gap="400">
+                        <Text as="h2" variant="headingMd">{product.productTitle} ({productIndex + 1} of {abTest.products.length})</Text>
+                        
+                        <DataTable
+                          columnContentTypes={['text', 'text', 'text']}
+                          headings={['Product', 'Original Price', 'Traffic %']}
+                          rows={[[
+                            product.productTitle,
+                            `$${product.basePrice.toFixed(2)}`,
+                            `${(() => {
+                              // For multiple product tests, calculate base traffic percentage
+                              // Base traffic = 100% - sum of all variant traffic percentages
+                              const variantTrafficSum = productVariants.reduce((sum, variant) => sum + variant.trafficPercent, 0);
+                              const baseTrafficPercent = Math.max(0, 100 - variantTrafficSum);
+                              return baseTrafficPercent;
+                            })()}%`
+                          ]]}
+                        />
 
-                <DataTable
-                  columnContentTypes={['text', 'text', 'text', 'text']}
-                  headings={['Product', 'Original Price', 'Test Price', 'Traffic %']}
-                  rows={abTest.products.map((product, index) => {
-                    const variant = abTest.variants[index] || abTest.variants[0];
-                    return [
-                      product.productTitle,
-                      `$${product.basePrice.toFixed(2)}`,
-                      variant ? `$${variant.price.toFixed(2)}` : 'N/A',
-                      variant ? `${variant.trafficPercent}%` : 'N/A'
-                    ];
-                  })}
-                />
-              </BlockStack>
-            </Card>
-          </Layout.Section>
-        </Layout>
-
-        <Layout>
-          <Layout.Section>
-            <Card>
-              <BlockStack gap="400">
-                <Text as="h2" variant="headingMd">Test Variants</Text>
-
-                <BlockStack gap="300">
-                  {abTest.variants.map((variant, index) => (
-                    <Box key={index} padding="400" background="bg-surface-secondary" borderRadius="200">
-                      <BlockStack gap="200">
-                        <InlineStack align="space-between">
-                          <Text as="h3" variant="headingSm">{variant.variantName}</Text>
-                          {variant.isBaseVariant && (
-                            <Badge tone="info">Base Variant</Badge>
+                        <Text as="h3" variant="headingMd">Test Variants</Text>
+                        <BlockStack gap="300">
+                          {/* Show base variant first */}
+                          {baseVariant && (
+                            <Box padding="400" background="bg-surface-secondary" borderRadius="200">
+                              <BlockStack gap="200">
+                                <InlineStack align="space-between">
+                                  <Text as="h3" variant="headingSm">Base Price</Text>
+                                  <Badge tone="info">Base Variant</Badge>
+                                </InlineStack>
+                                <InlineStack gap="400">
+                                  <Text as="p" variant="bodyMd">
+                                    <strong>Price:</strong> ${baseVariant.price.toFixed(2)}
+                                  </Text>
+                                  <Text as="p" variant="bodyMd">
+                                    <strong>Discount:</strong> {baseVariant.discount}%
+                                  </Text>
+                                  <Text as="p" variant="bodyMd">
+                                    <strong>Traffic:</strong> {baseVariant.trafficPercent}%
+                                  </Text>
+                                </InlineStack>
+                              </BlockStack>
+                            </Box>
                           )}
-                        </InlineStack>
-                        <InlineStack gap="400">
-                          <Text as="p" variant="bodyMd">
-                            <strong>Price:</strong> ${variant.price.toFixed(2)}
-                          </Text>
-                          <Text as="p" variant="bodyMd">
-                            <strong>Discount:</strong> {variant.discount}%
-                          </Text>
-                          <Text as="p" variant="bodyMd">
-                            <strong>Traffic:</strong> {variant.trafficPercent}%
-                          </Text>
-                        </InlineStack>
+                          
+                          {/* Show test variants */}
+                          {testVariants.map((variant, index) => (
+                            <Box key={index} padding="400" background="bg-surface-secondary" borderRadius="200">
+                              <BlockStack gap="200">
+                                <InlineStack align="space-between">
+                                  <Text as="h3" variant="headingSm">Test Variant {index + 1}</Text>
+                                </InlineStack>
+                                <InlineStack gap="400">
+                                  <Text as="p" variant="bodyMd">
+                                    <strong>Price:</strong> ${variant.price.toFixed(2)}
+                                  </Text>
+                                  <Text as="p" variant="bodyMd">
+                                    <strong>Discount:</strong> {variant.discount}%
+                                  </Text>
+                                  <Text as="p" variant="bodyMd">
+                                    <strong>Traffic:</strong> {variant.trafficPercent}%
+                                  </Text>
+                                </InlineStack>
+                              </BlockStack>
+                            </Box>
+                          ))}
+                        </BlockStack>
                       </BlockStack>
-                    </Box>
-                  ))}
-                </BlockStack>
-              </BlockStack>
-            </Card>
-          </Layout.Section>
-        </Layout>
+                    </Card>
+                  </Layout.Section>
+                </Layout>
+              );
+            })}
+          </BlockStack>
+        ) : (
+          // Single product test - show in original format
+          <>
+            <Layout>
+              <Layout.Section>
+                <Card>
+                  <BlockStack gap="400">
+                    <Text as="h2" variant="headingMd">Test Details</Text>
+
+                    <DataTable
+                      columnContentTypes={['text', 'text', 'text']}
+                      headings={['Product', 'Original Price', 'Traffic %']}
+                      rows={abTest.products.map((product, index) => {
+                        return [
+                          product.productTitle,
+                          `$${product.basePrice.toFixed(2)}`,
+                          `${abTest.baseTrafficPercent}%`
+                        ];
+                      })}
+                    />
+                  </BlockStack>
+                </Card>
+              </Layout.Section>
+            </Layout>
+
+            <Layout>
+              <Layout.Section>
+                <Card>
+                  <BlockStack gap="400">
+                    <Text as="h2" variant="headingMd">Test Variants</Text>
+
+                    <BlockStack gap="300">
+                      {abTest.variants.map((variant, index) => (
+                        <Box key={index} padding="400" background="bg-surface-secondary" borderRadius="200">
+                          <BlockStack gap="200">
+                            <InlineStack align="space-between">
+                              <Text as="h3" variant="headingSm">Test Variant {index + 1}</Text>
+                              {variant.isBaseVariant && (
+                                <Badge tone="info">Base Variant</Badge>
+                              )}
+                            </InlineStack>
+                            <InlineStack gap="400">
+                              <Text as="p" variant="bodyMd">
+                                <strong>Price:</strong> ${variant.price.toFixed(2)}
+                              </Text>
+                              <Text as="p" variant="bodyMd">
+                                <strong>Discount:</strong> {variant.discount}%
+                              </Text>
+                              <Text as="p" variant="bodyMd">
+                                <strong>Traffic:</strong> {variant.trafficPercent}%
+                              </Text>
+                            </InlineStack>
+                          </BlockStack>
+                        </Box>
+                      ))}
+                    </BlockStack>
+                  </BlockStack>
+                </Card>
+              </Layout.Section>
+            </Layout>
+          </>
+        )}
 
         <Layout>
           <Layout.Section>
@@ -240,6 +459,41 @@ export default function TestView() {
           </Layout.Section>
         </Layout>
       </BlockStack>
+
+      <Modal
+        open={showDeleteModal}
+        onClose={handleDeleteCancel}
+        title="Delete Test"
+        primaryAction={{
+          content: "Delete Test",
+          destructive: true,
+          onAction: handleDeleteConfirm,
+        }}
+        secondaryActions={[
+          {
+            content: "Cancel",
+            onAction: handleDeleteCancel,
+          },
+        ]}
+      >
+        <Modal.Section>
+          <BlockStack gap="300">
+            <Text as="p">
+              Are you sure you want to delete the test "{abTest.title}"?
+            </Text>
+            <Text as="p" tone="subdued">
+              This action cannot be undone. All test data including products, variants, and results will be permanently removed.
+            </Text>
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
+
+      {/* Hidden form for actual deletion */}
+      {showDeleteModal && (
+        <Form method="post" id="delete-form" style={{ display: 'none' }}>
+          <input type="hidden" name="action" value="delete" />
+        </Form>
+      )}
     </Page>
   );
 }

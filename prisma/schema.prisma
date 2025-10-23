@@ -58,14 +58,63 @@ model ABTestProduct {
 }
 
 model ABTestVariant {
-  id             Int     @id @default(autoincrement())
-  abTestId       Int
-  variantName    String
-  price          Float
-  discount       Float?
-  trafficPercent Float
-  isBaseVariant  Boolean @default(false)
-  abTest         ABTest  @relation(fields: [abTestId], references: [id], onDelete: Cascade)
+  id               Int     @id @default(autoincrement())
+  abTestId         Int
+  variantName      String
+  price            Float
+  discount         Float?
+  trafficPercent   Float
+  isBaseVariant    Boolean @default(false)
+  variantProductId String? // Link variant to specific product in multi-product tests
+  abTest           ABTest  @relation(fields: [abTestId], references: [id], onDelete: Cascade)
+  viewEvents       ViewEvent[]
+  conversionEvents ConversionEvent[]
 
   @@map("ab_test_variants")
+}
+
+model ViewEvent {
+  id            Int      @id @default(autoincrement())
+  productId     String
+  variantId     Int?
+  abTestId      Int?
+  sessionId     String
+  customerId    String?
+  shop          String
+  url           String
+  price         Float
+  isTestPrice   Boolean
+  timestamp     DateTime @default(now())
+  variant       ABTestVariant? @relation(fields: [variantId], references: [id])
+
+  @@map("view_events")
+}
+
+model ConversionEvent {
+  id            Int      @id @default(autoincrement())
+  productId     String
+  variantId     Int?
+  abTestId      Int?
+  sessionId     String
+  customerId    String?
+  shop          String
+  url           String
+  price         Float
+  orderValue    Float?
+  timestamp     DateTime @default(now())
+  variant       ABTestVariant? @relation(fields: [variantId], references: [id])
+
+  @@map("conversion_events")
+}
+
+model Settings {
+  id                    Int     @id @default(autoincrement())
+  shop                  String  @unique
+  auto_install          String  @default("false")
+  enable_cart_adjustment String @default("false")
+  auto_rotation_enabled Boolean @default(false)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@map("settings")
 }
