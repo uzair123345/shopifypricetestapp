@@ -270,6 +270,93 @@ export default function Analytics() {
                                   </Text>
                                   
                                   <Layout>
+                                    {/* Base Price Card for Multiple Product Tests */}
+                                    <Layout.Section variant="oneThird">
+                                      <Card>
+                                        <BlockStack gap="300">
+                                          <InlineStack align="space-between">
+                                            <Text as="h4" variant="headingSm">
+                                              Base Price
+                                            </Text>
+                                            <InlineStack gap="200">
+                                              <Badge tone="info">
+                                                {(() => {
+                                                  // Calculate base traffic percentage for this product
+                                                  const variantTrafficSum = product.variants.reduce((sum, variant) => sum + variant.trafficPercent, 0);
+                                                  const baseTrafficPercent = Math.max(0, 100 - variantTrafficSum);
+                                                  return `${baseTrafficPercent}% Traffic`;
+                                                })()}
+                                              </Badge>
+                                              <Badge tone="info">
+                                                Base Price
+                                              </Badge>
+                                            </InlineStack>
+                                          </InlineStack>
+                                          
+                                          {/* Traffic allocation bar */}
+                                          <Box 
+                                            padding="200" 
+                                            background="bg-surface-secondary" 
+                                            borderRadius="100"
+                                          >
+                                            <BlockStack gap="200">
+                                              <Text variant="bodyMd" fontWeight="medium">
+                                                Conversion Rate
+                                              </Text>
+                                              <Box 
+                                                padding="100" 
+                                                background="bg-surface-brand" 
+                                                borderRadius="050"
+                                                style={{ 
+                                                  width: `${(() => {
+                                                    const variantTrafficSum = product.variants.reduce((sum, variant) => sum + variant.trafficPercent, 0);
+                                                    const baseTrafficPercent = Math.max(0, 100 - variantTrafficSum);
+                                                    return baseTrafficPercent;
+                                                  })()}%`,
+                                                  minWidth: '20px'
+                                                }}
+                                              />
+                                              <InlineStack align="space-between">
+                                                <InlineStack gap="200" align="start">
+                                                  <Icon source="warning" tone="critical" />
+                                                  <Text 
+                                                    variant="bodyMd" 
+                                                    tone="critical"
+                                                    fontWeight="medium"
+                                                  >
+                                                    No Data Yet
+                                                  </Text>
+                                                </InlineStack>
+                                                <Text variant="bodyMd" fontWeight="medium">
+                                                  {(() => {
+                                                    const variantTrafficSum = product.variants.reduce((sum, variant) => sum + variant.trafficPercent, 0);
+                                                    const baseTrafficPercent = Math.max(0, 100 - variantTrafficSum);
+                                                    return `${baseTrafficPercent}%`;
+                                                  })()}
+                                                </Text>
+                                              </InlineStack>
+                                            </BlockStack>
+                                          </Box>
+                                          
+                                          <InlineStack gap="400" wrap>
+                                            <Text variant="bodyMd" fontWeight="medium">
+                                              Price: ${product.basePrice.toFixed(2)}
+                                            </Text>
+                                            <Text variant="bodyMd" fontWeight="medium">
+                                              Views: 0
+                                            </Text>
+                                            <Text variant="bodyMd" fontWeight="medium">
+                                              Purchases: 0
+                                            </Text>
+                                            <Text variant="bodyMd" fontWeight="medium">
+                                              Revenue: $0.00
+                                            </Text>
+                                          </InlineStack>
+                                        </BlockStack>
+                                      </Card>
+                                    </Layout.Section>
+                                    
+                                    {/* Test Variants */}
                                     {product.variants.map((variant, index) => {
                                       const isBestPerformer = variant.conversionRate && 
                                         parseFloat(variant.conversionRate) === Math.max(...product.variants.map(v => parseFloat(v.conversionRate || "0")));
