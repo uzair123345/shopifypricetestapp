@@ -320,33 +320,57 @@ export default function Analytics() {
                                                 <InlineStack gap="200" align="start">
                                                   <Icon source="warning" tone="critical" />
                                                   <Text 
-                                                    variant="bodyMd" 
+                                                    variant="headingMd" 
+                                                    fontWeight="bold"
                                                     tone="critical"
-                                                    fontWeight="medium"
                                                   >
-                                                    No Data Yet
+                                                    0.00%
                                                   </Text>
                                                 </InlineStack>
-                                                <Text variant="bodyMd" fontWeight="medium">
-                                                  {(() => {
-                                                    const variantTrafficSum = product.variants.reduce((sum, variant) => sum + variant.trafficPercent, 0);
-                                                    const baseTrafficPercent = Math.max(0, 100 - variantTrafficSum);
-                                                    return `${baseTrafficPercent}%`;
-                                                  })()}
+                                                <Text variant="bodyMd" tone="subdued">
+                                                  0 purchases
                                                 </Text>
                                               </InlineStack>
                                             </BlockStack>
                                           </Box>
                                           
-                                          <InlineStack gap="400" wrap>
-                                            <Text variant="bodyMd" fontWeight="medium">
+                                          {/* Metrics */}
+                                          <Layout>
+                                            <Layout.Section variant="oneThird">
+                                              <BlockStack gap="100" align="center">
+                                                <Text as="h6" variant="headingMd">
+                                                  0
+                                                </Text>
+                                                <Text variant="bodySm" tone="subdued">
+                                                  Views
+                                                </Text>
+                                              </BlockStack>
+                                            </Layout.Section>
+                                            <Layout.Section variant="oneThird">
+                                              <BlockStack gap="100" align="center">
+                                                <Text as="h6" variant="headingMd">
+                                                  0
+                                                </Text>
+                                                <Text variant="bodySm" tone="subdued">
+                                                  Purchases
+                                                </Text>
+                                              </BlockStack>
+                                            </Layout.Section>
+                                            <Layout.Section variant="oneThird">
+                                              <BlockStack gap="100" align="center">
+                                                <Text as="h6" variant="headingMd">
+                                                  0
+                                                </Text>
+                                                <Text variant="bodySm" tone="subdued">
+                                                  Units Sold
+                                                </Text>
+                                              </BlockStack>
+                                            </Layout.Section>
+                                          </Layout>
+                                          
+                                          <InlineStack align="space-between">
+                                            <Text variant="bodyMd" tone="subdued">
                                               Price: ${product.basePrice.toFixed(2)}
-                                            </Text>
-                                            <Text variant="bodyMd" fontWeight="medium">
-                                              Views: 0
-                                            </Text>
-                                            <Text variant="bodyMd" fontWeight="medium">
-                                              Purchases: 0
                                             </Text>
                                             <Text variant="bodyMd" fontWeight="medium">
                                               Revenue: $0.00
