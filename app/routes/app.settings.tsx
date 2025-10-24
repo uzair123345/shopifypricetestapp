@@ -681,7 +681,7 @@ export default function AppSettings() {
               Manually trigger price rotation to update your Shopify product prices based on the best-performing A/B test variants, or reset all prices to their original values.
             </Text>
             
-            <InlineStack gap="300">
+            <InlineStack gap="300" wrap>
               <Button 
                 onClick={handleManualRotate}
                 loading={isManualRotating}
@@ -706,6 +706,8 @@ export default function AppSettings() {
                 • <strong>Manual Rotation:</strong> Analyzes conversion rates and updates prices to best-performing variants
                 <br />
                 • <strong>Reset Prices:</strong> Restores all test products to their original prices
+                <br />
+                • <strong>Clear Test Data:</strong> Removes test tracking data to show clean analytics dashboard
                 <br />
                 • Auto-rotation runs every minute when enabled above
                 <br />
