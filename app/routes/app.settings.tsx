@@ -707,8 +707,6 @@ export default function AppSettings() {
                 <br />
                 • <strong>Reset Prices:</strong> Restores all test products to their original prices
                 <br />
-                • <strong>Clear Test Data:</strong> Removes test tracking data to show clean analytics dashboard
-                <br />
                 • Auto-rotation runs every minute when enabled above
                 <br />
                 • Disabling auto-rotation automatically resets all prices to original values
