@@ -153,27 +153,32 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       await db.aBTest.delete({
         where: { id: testId },
       });
-      // Redirect to tests list after deletion, preserving auth context
+      
+      // Get all auth query params from original request to preserve context
       const url = new URL(request.url);
-      const host = url.searchParams.get("host");
-      const shop = url.searchParams.get("shop");
-      const query = new URLSearchParams();
-      if (host) query.set("host", host);
-      if (shop) query.set("shop", shop);
+      const query = new URLSearchParams(url.search);
+      
+      // Remove any test-specific params, keep auth params
+      query.delete("action");
+      query.delete("testId");
+      
       const queryString = query.toString();
-      return redirect(`/app/tests${queryString ? `?${queryString}` : ""}`);
+      const redirectUrl = `/app/tests${queryString ? `?${queryString}` : ""}`;
+      
+      console.log("🔄 Redirecting after delete to:", redirectUrl);
+      return redirect(redirectUrl);
     }
 
-    // Preserve auth context for all redirects
+    // Preserve auth context for all other redirects
     const url = new URL(request.url);
-    const host = url.searchParams.get("host");
-    const shop = url.searchParams.get("shop");
-    const query = new URLSearchParams();
-    if (host) query.set("host", host);
-    if (shop) query.set("shop", shop);
-    const queryString = query.toString();
+    const query = new URLSearchParams(url.search);
+    query.delete("action"); // Remove action param
     
-    return redirect(`/app/test-view/${testId}${queryString ? `?${queryString}` : ""}`);
+    const queryString = query.toString();
+    const redirectUrl = `/app/test-view/${testId}${queryString ? `?${queryString}` : ""}`;
+    
+    console.log("🔄 Redirecting to:", redirectUrl);
+    return redirect(redirectUrl);
   } catch (error) {
     console.error("Error updating test:", error);
     return json({ error: "Failed to update test" }, { status: 500 });
