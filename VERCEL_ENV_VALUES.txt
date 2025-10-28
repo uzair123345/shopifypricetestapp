@@ -1,0 +1,47 @@
+# VERCEL ENVIRONMENT VARIABLES - COPY AND PASTE THESE
+
+Add these 5 variables to Vercel Environment Variables:
+
+===============================================================
+
+1. SHOPIFY_API_KEY
+   beca6ad051b2ddeeaebd410aa5b32c12
+
+===============================================================
+
+2. SHOPIFY_API_SECRET
+   8b345a76d5411e217b052879c1ace25d
+
+===============================================================
+
+3. SHOPIFY_APP_URL
+   https://shopifypricetestapp-ab.vercel.app
+
+===============================================================
+
+4. SCOPES
+   write_products,read_products,write_script_tags,read_script_tags
+
+===============================================================
+
+5. DATABASE_URL
+   (Already exists - don't need to add)
+
+===============================================================
+
+HOW TO ADD:
+1. Go to: https://vercel.com/shopifypricetestapp-ab/settings/environment-variables
+2. Click "+ Add" button
+3. Copy/paste each variable above
+4. Select: ☑ Production ☑ Preview ☑ Development
+5. Click "Save"
+6. Repeat for all 4 variables
+
+AFTER ADDING ALL:
+7. Go to "Deployments" tab
+8. Click "Redeploy"
+9. Wait 2-3 minutes
+10. Visit: https://shopifypricetestapp-ab.vercel.app
+
+YOUR APP WILL WORK! 🎉
+
