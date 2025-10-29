@@ -72,7 +72,7 @@ export class AutoRotationScheduler {
         }
 
         // Create admin client for this shop
-        const adminClient = shopify.rest.resources.Session.fromSession(session);
+        const adminClient = admin;
 
         // Run price rotation for this shop
         const result = await ShopifyPriceUpdater.rotateAllActiveTests(adminClient);

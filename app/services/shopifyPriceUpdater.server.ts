@@ -119,7 +119,7 @@ export class ShopifyPriceUpdater {
       const failures: Array<{testId: number; message: string}> = [];
       for (const test of activeTests) {
         try {
-          console.log(`Rotating test ${test.id}: ${test.name}, productId: ${test.productId}`);
+          console.log(`Rotating test ${test.id}: ${test.title}`);
           await this.rotateTestPrices(test, admin);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
