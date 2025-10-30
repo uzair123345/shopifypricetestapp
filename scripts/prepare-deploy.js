@@ -14,7 +14,7 @@ const deploySchemaPath = join(__dirname, '..', 'prisma', 'schema.prisma.deploy')
 // Vercel automatically sets VERCEL=1 and VERCEL_ENV
 const isVercel = process.env.VERCEL === '1' || process.env.VERCEL_ENV !== undefined;
 const isProduction = process.env.NODE_ENV === 'production';
-const hasPostgresUrl = process.env.DATABASE_URL && process.env.DATABASE_URL.startsWith('postgresql://');
+const hasPostgresUrl = process.env.DATABASE_URL && (process.env.DATABASE_URL.startsWith('postgresql://') || process.env.DATABASE_URL.startsWith('postgres://'));
 
 console.log('🔧 Preparing Prisma schema for deployment...');
 console.log(`   Environment: ${isVercel ? 'Vercel' : isProduction ? 'Production' : 'Local'}`);
@@ -29,11 +29,14 @@ if (process.env.DATABASE_URL) {
 }
 console.log(`   DATABASE_URL type: ${hasPostgresUrl ? 'PostgreSQL' : process.env.DATABASE_URL ? 'Other' : 'None'}`);
 
-// Use PostgreSQL if:
-// 1. DATABASE_URL is present and is PostgreSQL
-// 2. We're on Vercel (always use PostgreSQL for Vercel)
-// 3. We're in production environment
-const shouldUsePostgres = hasPostgresUrl || isVercel || isProduction;
+// Use PostgreSQL if ANY of these are true:
+// 1. DATABASE_URL exists (highest priority - if it exists, we're definitely using a database)
+// 2. We're on Vercel (Vercel always uses PostgreSQL)
+// 3. We're in production with DATABASE_URL
+// 
+// SIMPLIFIED: If DATABASE_URL exists, ALWAYS use PostgreSQL schema
+// This is safe because if DATABASE_URL exists, we're definitely not using local SQLite
+const shouldUsePostgres = !!process.env.DATABASE_URL || isVercel || isProduction;
 
 if (shouldUsePostgres) {
   console.log('📋 Using PostgreSQL schema for deployment...');
