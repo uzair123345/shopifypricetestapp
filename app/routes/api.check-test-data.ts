@@ -28,7 +28,7 @@ export async function action({ request }: { request: Request }) {
       message: "Test data retrieved",
       details: {
         totalTests: allTests.length,
-        activeTests: activeTests.length,
+        activeTestsCount: activeTests.length,
         allTests: allTests.map(test => ({
           id: test.id,
           title: test.title,
