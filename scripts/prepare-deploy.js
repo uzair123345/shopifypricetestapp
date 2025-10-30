@@ -65,6 +65,16 @@ if (shouldUsePostgres) {
     console.error('❌ Verification FAILED: Schema file still contains SQLite!');
     process.exit(1);
   }
+  
+  // Fix migration_lock.toml for PostgreSQL
+  const migrationLockPath = join(__dirname, '..', 'prisma', 'migrations', 'migration_lock.toml');
+  if (existsSync(migrationLockPath)) {
+    let lockContent = readFileSync(migrationLockPath, 'utf-8');
+    // Replace sqlite with postgresql in the lock file
+    lockContent = lockContent.replace(/provider = "sqlite"/g, 'provider = "postgresql"');
+    writeFileSync(migrationLockPath, lockContent, 'utf-8');
+    console.log('✅ Updated migration_lock.toml to use PostgreSQL');
+  }
 } else {
   console.log('📋 Using SQLite schema for local development...');
   
