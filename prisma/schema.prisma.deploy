@@ -113,6 +113,8 @@ model Settings {
   auto_install          String  @default("false")
   enable_cart_adjustment String @default("false")
   auto_rotation_enabled Boolean @default(false)
+  rotation_interval_minutes Int  @default(1)
+  last_rotated_at       DateTime?
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
 

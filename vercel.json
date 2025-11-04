@@ -5,6 +5,12 @@
   "regions": ["iad1"],
   "env": {
     "NODE_ENV": "production"
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/cron/rotate-prices",
+      "schedule": "* * * * *"
+    }
+  ]
 }
 

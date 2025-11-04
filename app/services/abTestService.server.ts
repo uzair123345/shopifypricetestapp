@@ -162,7 +162,9 @@ export async function getDisplayPrice(
     // Use the most recent active test for this product
     const test = activeTests[0]; // They're already sorted by creation date in the query
     
-    console.log(`[getDisplayPrice] Using test ${test.id} for product ${productId}`);
+    console.log(`[getDisplayPrice] Using test ${test.id} (${test.testType}) for product ${productId}`);
+    console.log(`[getDisplayPrice] Test products:`, test.products.map(p => ({ id: p.productId, title: p.productTitle })));
+    console.log(`[getDisplayPrice] All test variants:`, test.variants.map(v => ({ id: v.id, name: v.variantName, productId: v.variantProductId, price: v.price })));
     
     // Filter variants for this specific product
     let productVariants = test.variants;
@@ -171,9 +173,10 @@ export async function getDisplayPrice(
       productVariants = test.variants.filter(v => 
         !v.variantProductId || v.variantProductId === productId
       );
+      console.log(`[getDisplayPrice] Filtered to ${productVariants.length} variants for product ${productId}:`, productVariants.map(v => ({ id: v.id, name: v.variantName, productId: v.variantProductId, price: v.price })));
     }
     
-    console.log(`[getDisplayPrice] Test has ${productVariants.length} variants for product ${productId}:`, productVariants.map(v => ({ name: v.variantName, price: v.price, traffic: v.trafficPercent })));
+    console.log(`[getDisplayPrice] Test has ${productVariants.length} variants for product ${productId}:`, productVariants.map(v => ({ id: v.id, name: v.variantName, price: v.price, traffic: v.trafficPercent })));
     
     // Get the base traffic percentage for this test
     const baseTrafficPercent = test.baseTrafficPercent || 34; // Default to 34% if not set
@@ -181,7 +184,7 @@ export async function getDisplayPrice(
     // Assign customer to a variant
     const assignedVariant = assignCustomerToVariant(session, productVariants, test.id, originalPrice, baseTrafficPercent);
     
-    console.log(`[getDisplayPrice] Assigned variant: ${assignedVariant.variantName} with price ${assignedVariant.price} (traffic: ${assignedVariant.trafficPercent}%)`);
+    console.log(`[getDisplayPrice] Assigned variant: ${assignedVariant.variantName} (ID: ${assignedVariant.id}) with price ${assignedVariant.price} (traffic: ${assignedVariant.trafficPercent}%) for product ${productId}`);
     
     return {
       price: assignedVariant.price,

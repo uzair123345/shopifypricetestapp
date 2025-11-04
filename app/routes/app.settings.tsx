@@ -2,7 +2,8 @@ import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useLoaderData, useActionData, Form } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
-// import db from "../db.server";
+import db from "../db.server";
+import scheduler from "../services/autoRotationScheduler.server";
 import {
   Page,
   Card,
@@ -16,8 +17,10 @@ import {
   Divider,
   Text,
   Box,
+  Modal,
+  Select,
 } from "@shopify/polaris";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   console.log("🚀 LOADER FUNCTION CALLED!");
@@ -29,7 +32,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // Get the current app URL dynamically
   const currentUrl = request.headers.get('host');
   const protocol = request.headers.get('x-forwarded-proto') || 'https';
-  const appUrl = process.env.SHOPIFY_APP_URL || `${protocol}://${currentUrl}`;
+  let appUrl = process.env.SHOPIFY_APP_URL || `${protocol}://${currentUrl}`;
+  
+  // For development, try to get the tunnel URL from the request
+  if (currentUrl && currentUrl.includes('trycloudflare.com')) {
+    appUrl = `${protocol}://${currentUrl}`;
+  }
+  
+  console.log("🔗 Detected app URL:", appUrl);
   
   try {
     // Check if script tag already exists using GraphQL
@@ -40,7 +50,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
             node {
               id
               src
-              event
               displayScope
             }
           }
@@ -57,6 +66,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const existingScript = scriptTags.find((tag: any) => 
       tag.src && tag.src.includes('ab-price-test-simple.js')
     );
+    
+    // Check if existing script has wrong URL and needs updating
+    const needsUpdate = existingScript && existingScript.src && !existingScript.src.includes(appUrl);
+    if (needsUpdate) {
+      console.log("🔄 Script URL mismatch detected, will update script tag");
+      console.log("  - Current script URL:", existingScript.src);
+      console.log("  - Correct app URL:", appUrl);
+    }
 
     // Get app settings using GraphQL
     const metafieldsResponse = await admin.graphql(`
@@ -90,50 +107,34 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     console.log("🔍 DATABASE QUERY DEBUG:");
     console.log("  - Querying shop:", session.shop);
     
-    // Test database connection first
-    try {
-      console.log("  - Testing database connection...");
-      // const testQuery = await db.settings.findMany();
-      // console.log("  - Database connection OK, found", testQuery.length, "total settings");
-      console.log("  - Database connection test skipped (commented out)");
-    } catch (error) {
-      console.error("  - Database connection error:", error);
-    }
-    
-    // let dbSettings = await db.settings.findUnique({
-    //   where: { shop: session.shop }
-    // });
+    let dbSettings = await db.settings.findUnique({
+      where: { shop: session.shop }
+    });
 
-    // console.log("  - Raw query result:", dbSettings);
+    console.log("  - Raw query result:", dbSettings);
 
     // If no settings exist, create default ones
-    // if (!dbSettings) {
-    //   console.log("  - No settings found, creating default...");
-    //   dbSettings = await db.settings.create({
-    //     data: {
-    //       shop: session.shop,
-    //       auto_install: "false",
-    //       enable_cart_adjustment: "false",
-    //       auto_rotation_enabled: false
-    //     }
-    //   });
-    //   console.log("  - Created default settings:", dbSettings);
-    // } else {
-    //   console.log("  - Found existing settings:", dbSettings);
-    // }
-
-    // Mock database settings for testing
-    const dbSettings = {
-      auto_rotation_enabled: false,
-      auto_install: "false",
-      enable_cart_adjustment: "false"
-    };
-    console.log("  - Using mock database settings:", dbSettings);
+    if (!dbSettings) {
+      console.log("  - No settings found, creating default...");
+      dbSettings = await db.settings.create({
+        data: {
+          shop: session.shop,
+          auto_install: "false",
+          enable_cart_adjustment: "false",
+          auto_rotation_enabled: false,
+          rotation_interval_minutes: 1 // Default to 1 minute
+        }
+      });
+      console.log("  - Created default settings:", dbSettings);
+    } else {
+      console.log("  - Found existing settings:", dbSettings);
+    }
 
     // Merge database settings with metafield settings
     const mergedSettings = {
       ...settings,
-      auto_rotation_enabled: dbSettings.auto_rotation_enabled
+      auto_rotation_enabled: dbSettings?.auto_rotation_enabled || false,
+      rotation_interval_minutes: dbSettings?.rotation_interval_minutes || 1
     };
 
     console.log("🔍 LOADER DEBUG:");
@@ -150,10 +151,71 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     console.log("    Value:", mergedSettings.auto_rotation_enabled);
     console.log("    Type:", typeof mergedSettings.auto_rotation_enabled);
 
+    // Start auto-rotation scheduler if it's enabled
+    if (mergedSettings.auto_rotation_enabled) {
+      console.log("🚀 Auto-rotation is enabled, starting scheduler...");
+      try {
+        await scheduler.start();
+        console.log("✅ Auto-rotation scheduler started successfully");
+      } catch (error) {
+        console.error("❌ Failed to start auto-rotation scheduler:", error);
+      }
+    }
+
+    // If script needs updating, automatically update it
+    if (needsUpdate) {
+      console.log("🔄 Auto-updating script tag with correct URL...");
+      try {
+        // Remove old script
+        const deleteResponse = await admin.graphql(`
+          mutation scriptTagDelete($id: ID!) {
+            scriptTagDelete(id: $id) {
+              deletedScriptTagId
+              userErrors {
+                field
+                message
+              }
+            }
+          }
+        `, {
+          variables: { id: existingScript.id }
+        });
+        
+        // Create new script with correct URL
+        const createResponse = await admin.graphql(`
+          mutation scriptTagCreate($input: ScriptTagInput!) {
+            scriptTagCreate(input: $input) {
+              scriptTag {
+                id
+                src
+                displayScope
+              }
+              userErrors {
+                field
+                message
+              }
+            }
+          }
+        `, {
+          variables: {
+            input: {
+              src: `${appUrl}/ab-price-test-simple.js`,
+              displayScope: "ONLINE_STORE"
+            }
+          }
+        });
+        
+        console.log("✅ Script tag updated successfully");
+      } catch (error) {
+        console.error("❌ Failed to auto-update script tag:", error);
+      }
+    }
+
     return json({
       scriptInstalled: !!existingScript,
       settings: mergedSettings,
       appUrl,
+      needsUpdate: needsUpdate,
     });
   } catch (error) {
     console.error("Error loading settings:", error);
@@ -177,6 +239,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const autoInstall = formData.get("autoInstall") === "on";
   const enableCartAdjustment = formData.get("enableCartAdjustment") === "on";
   const autoRotationEnabled = formData.get("autoRotationEnabled") === "on";
+  const rotationIntervalRaw = formData.get("rotationIntervalMinutes") as string | null;
+  const rotationIntervalMinutes = rotationIntervalRaw ? parseInt(rotationIntervalRaw) : 1;
+  
+  console.log("🔍 FORM DATA:");
+  console.log("  - autoRotationEnabled:", autoRotationEnabled);
+  console.log("  - rotationIntervalMinutes (raw):", rotationIntervalRaw);
+  console.log("  - rotationIntervalMinutes (parsed):", rotationIntervalMinutes);
 
   console.log("🔍 ACTION DEBUG:");
   console.log("  - Action:", action);
@@ -199,6 +268,46 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       console.log("Session access token exists:", !!session.accessToken);
       
       try {
+        // First, check if script already exists and remove it
+        const checkScriptTagsResponse = await admin.graphql(`
+          query getScriptTags($first: Int!) {
+            scriptTags(first: $first) {
+              edges {
+                node {
+                  id
+                  src
+                }
+              }
+            }
+          }
+        `, {
+          variables: { first: 50 }
+        });
+
+        const checkScriptTagsData = await checkScriptTagsResponse.json();
+        const existingScripts = checkScriptTagsData.data?.scriptTags?.edges?.map((edge: any) => edge.node) || [];
+        const existingScript = existingScripts.find((tag: any) => 
+          tag.src && tag.src.includes('ab-price-test-simple.js')
+        );
+
+        // Remove existing script if found
+        if (existingScript) {
+          console.log("Removing existing script tag:", existingScript.id);
+          await admin.graphql(`
+            mutation scriptTagDelete($id: ID!) {
+              scriptTagDelete(id: $id) {
+                deletedScriptTagId
+                userErrors {
+                  field
+                  message
+                }
+              }
+            }
+          `, {
+            variables: { id: existingScript.id }
+          });
+        }
+
         // Use the admin client to make the API call
         const scriptTagResponse = await admin.graphql(`
           mutation scriptTagCreate($input: ScriptTagInput!) {
@@ -224,15 +333,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         });
 
         const scriptTagData = await scriptTagResponse.json();
-        console.log("Script tag creation response:", scriptTagData);
+        console.log("Script tag creation response:", JSON.stringify(scriptTagData, null, 2));
 
         if (scriptTagData.data?.scriptTagCreate?.userErrors?.length > 0) {
           const errors = scriptTagData.data.scriptTagCreate.userErrors;
           console.error("Script tag creation errors:", errors);
+          const errorMessage = errors.map((e: any) => e.message).join(', ');
           return json({ 
             success: false, 
             error: "Failed to create script tag",
-            details: errors.map((e: any) => e.message).join(', ')
+            details: errorMessage,
+            scriptUrl: `${appUrl}/ab-price-test-simple.js`,
+            manualInstall: true
           }, { status: 400 });
         }
 
@@ -247,19 +359,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           return json({ 
             success: false, 
             error: "Failed to create script tag",
-            details: "Unexpected response structure"
+            details: "Unexpected response structure. Check console logs for details.",
+            scriptUrl: `${appUrl}/ab-price-test-simple.js`,
+            manualInstall: true
           }, { status: 400 });
         }
       } catch (error) {
         console.error("Error creating script tag:", error);
+        const errorMessage = error instanceof Error ? error.message : "Unknown error";
         
         // Fallback: Provide manual installation instructions
         return json({ 
-          success: true, 
+          success: false, 
           message: "Automatic installation failed, but you can install manually. Check the instructions below.",
           scriptUrl: `${appUrl}/ab-price-test-simple.js`,
           manualInstall: true,
-          error: error instanceof Error ? error.message : "Unknown error"
+          error: errorMessage,
+          details: `Error: ${errorMessage}. Please install the script manually using the instructions below.`
         });
       }
     }
@@ -325,18 +441,48 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         where: { shop: session.shop },
         update: {
           auto_rotation_enabled: autoRotationEnabled,
+          rotation_interval_minutes: rotationIntervalMinutes,
           auto_install: autoInstall.toString(),
           enable_cart_adjustment: enableCartAdjustment.toString()
         },
         create: {
           shop: session.shop,
           auto_rotation_enabled: autoRotationEnabled,
+          rotation_interval_minutes: rotationIntervalMinutes,
           auto_install: autoInstall.toString(),
           enable_cart_adjustment: enableCartAdjustment.toString()
         }
       });
 
       console.log("✅ DATABASE SAVE RESULT:", savedSettings);
+      console.log("✅ SAVED ROTATION INTERVAL:", rotationIntervalMinutes, "minutes");
+      
+      // Verify the saved value
+      const verifySettings = await db.settings.findUnique({
+        where: { shop: session.shop },
+        select: { rotation_interval_minutes: true }
+      });
+      console.log("✅ VERIFIED SAVED INTERVAL:", verifySettings?.rotation_interval_minutes);
+
+      // Start or stop auto-rotation scheduler based on setting
+      if (autoRotationEnabled) {
+        console.log("🚀 Starting auto-rotation scheduler...");
+        try {
+          await scheduler.start();
+          console.log("✅ Auto-rotation scheduler started successfully");
+        } catch (error) {
+          console.error("❌ Failed to start auto-rotation scheduler:", error);
+          // Continue anyway, scheduler might already be running
+        }
+      } else {
+        console.log("⏹️ Stopping auto-rotation scheduler...");
+        try {
+          await scheduler.stop();
+          console.log("✅ Auto-rotation scheduler stopped successfully");
+        } catch (error) {
+          console.error("❌ Failed to stop auto-rotation scheduler:", error);
+        }
+      }
 
       // Save app settings as metafields using GraphQL
       const settings = [
@@ -391,7 +537,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
       return json({ 
         success: true, 
-        message: "Settings saved successfully!" 
+        message: "Settings saved successfully!",
+        savedRotationInterval: rotationIntervalMinutes
       });
     }
 
@@ -411,13 +558,11 @@ export default function AppSettings() {
   
   const [isManualRotating, setIsManualRotating] = useState(false);
   const [isResettingPrices, setIsResettingPrices] = useState(false);
-  const [autoRotate, setAutoRotate] = useState(() => {
-    // Always use localStorage since server-side isn't working
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('autoRotateEnabled') === 'true';
-    }
-    return false;
-  });
+  const [isClearingAnalytics, setIsClearingAnalytics] = useState(false);
+  const [showClearAnalyticsModal, setShowClearAnalyticsModal] = useState(false);
+  // Initialize from server data
+  const [autoRotate, setAutoRotate] = useState(() => settings?.auto_rotation_enabled || false);
+  const [rotationInterval, setRotationInterval] = useState(() => settings?.rotation_interval_minutes || 1);
 
   console.log("🎯 COMPONENT DEBUG:");
   console.log("  - settings.auto_rotation_enabled:", settings.auto_rotation_enabled);
@@ -465,78 +610,80 @@ export default function AppSettings() {
     }
   };
 
-  const handleFormSubmit = (event: React.FormEvent) => {
-    console.log("🎯 FORM SUBMIT DEBUG:");
-    console.log("  - Form submitted!");
-    console.log("  - autoRotate state:", autoRotate);
-    
-    // Save to localStorage
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('autoRotateEnabled', autoRotate.toString());
-      console.log("  - Saved to localStorage:", { autoRotate });
-      
-      // Show success message
-      alert("✅ Settings saved successfully!");
+  const handleClearAnalytics = async () => {
+    setIsClearingAnalytics(true);
+    try {
+      const response = await fetch(`${appUrl}/api/clear-analytics`, {
+        method: "POST",
+      });
+      const result = await response.json();
+
+      if (response.ok && result.success) {
+        alert(`✅ ${result.message}`);
+        console.log("Cleared analytics:", result);
+      } else {
+        alert(`❌ Error: ${result.error || "Unknown error"}`);
+      }
+    } catch (error) {
+      console.error("Clear analytics error:", error);
+      alert(`❌ Error: ${error instanceof Error ? error.message : "Network error"}`);
+    } finally {
+      setIsClearingAnalytics(false);
+      setShowClearAnalyticsModal(false);
     }
-    
-    // Prevent default form submission since server-side isn't working
-    event.preventDefault();
   };
 
-  // Save auto-rotation state to localStorage whenever it changes
+  // Form submission is now handled by Remix automatically
+  // No need for preventDefault() - let the form submit to the server
+
+  // Track if we've initialized from server to avoid resetting while user is interacting
+  const [isInitialized, setIsInitialized] = useState(false);
+  const lastSavedInterval = useRef<number | null>(null);
+  const userSelectedValue = useRef<number | null>(null);
+  
+  // Initialize state from server data only once on mount
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('autoRotateEnabled', autoRotate.toString());
-      console.log("🔄 Auto-rotation state saved to localStorage:", autoRotate);
+    if (settings && !isInitialized) {
+      const newAutoRotate = settings.auto_rotation_enabled || false;
+      const newRotationInterval = settings.rotation_interval_minutes || 1;
+      
+      setAutoRotate(newAutoRotate);
+      setRotationInterval(newRotationInterval);
+      setIsInitialized(true);
+      console.log("🔄 Initialized state from server:", { newAutoRotate, newRotationInterval });
     }
-  }, [autoRotate]);
+  }, [settings, isInitialized]);
+  
+  // Sync after form submission - prioritize the saved value
+  useEffect(() => {
+    if (actionData && 'success' in actionData && actionData.success) {
+      if ('savedRotationInterval' in actionData) {
+        const savedInterval = actionData.savedRotationInterval as number;
+        if (savedInterval) {
+          lastSavedInterval.current = savedInterval;
+          userSelectedValue.current = null; // Clear user selection after save
+          setRotationInterval(savedInterval);
+          setIsInitialized(true); // Mark as initialized to prevent reset
+          console.log("✅ Updated rotationInterval from actionData after save:", savedInterval);
+        }
+      }
+    }
+  }, [actionData]);
 
   // Handle auto-rotation disable with price reset
-  const handleAutoRotateChange = async (newValue: boolean) => {
-    if (!newValue && autoRotate) {
-      // Auto-rotation is being disabled - ask for confirmation and reset prices
-      const confirmed = window.confirm(
-        "Disabling auto-rotation will reset all test prices to their original values. This ensures customers see the correct prices when rotation stops.\n\nDo you want to continue?"
-      );
-      
-      if (confirmed) {
-        // Reset prices first, then disable auto-rotation
-        await handleResetPrices();
-        setAutoRotate(false);
-      }
-      // If not confirmed, don't change the autoRotate state
-    } else {
-      // Auto-rotation is being enabled - just update the state
-      setAutoRotate(newValue);
-    }
+  const handleAutoRotateChange = (newValue: boolean) => {
+    // Just update the state - form submission will handle server-side
+    setAutoRotate(newValue);
   };
 
-  // Client-side auto-rotation effect
+  // Note: Auto-rotation is now handled server-side by the scheduler
+  // This effect is kept for backward compatibility but doesn't run client-side rotation
   useEffect(() => {
-    if (!autoRotate) return;
-
-    console.log("🔄 Starting client-side auto-rotation...");
-    
-    const interval = setInterval(async () => {
-      try {
-        console.log("🔄 Client-side auto-rotation running...");
-        const response = await fetch('/api/manual-rotate');
-        const result = await response.json();
-        
-        if (result.success) {
-          console.log("✅ Client-side auto-rotation successful:", result.message);
-        } else {
-          console.log("❌ Client-side auto-rotation failed:", result.error);
-        }
-      } catch (error) {
-        console.log("❌ Client-side auto-rotation error:", error);
-      }
-    }, 60000); // Every 60 seconds (1 minute)
-
-    return () => {
-      console.log("⏹️ Stopping client-side auto-rotation...");
-      clearInterval(interval);
-    };
+    if (autoRotate) {
+      console.log("🔄 Auto-rotation is enabled - handled by server-side scheduler");
+    } else {
+      console.log("⏹️ Auto-rotation is disabled");
+    }
   }, [autoRotate]);
 
   return (
@@ -628,25 +775,66 @@ export default function AppSettings() {
         </Card>
 
         <Card>
-          <Form method="post" onSubmit={handleFormSubmit}>
+          <Form method="post">
             <input type="hidden" name="action" value="save_settings" />
+            <input 
+              type="hidden" 
+              name="autoRotationEnabled" 
+              value={autoRotate ? "on" : "off"} 
+              key={autoRotate ? "on" : "off"} 
+            />
+            <input type="hidden" name="autoInstall" value="off" />
+            <input type="hidden" name="enableCartAdjustment" value="off" />
                   <FormLayout>
                     <Text variant="headingMd">Price Rotation Settings</Text>
                     
                     <Checkbox
                       label="Enable Automatic Price Rotation"
-                      helpText="Automatically rotate prices every minute based on A/B test performance"
+                      helpText="Automatically rotate prices based on A/B test performance. Note: On Vercel free plan, use manual rotation instead."
                       checked={autoRotate}
                       onChange={handleAutoRotateChange}
-                      name="autoRotationEnabled"
                     />
 
                     {autoRotate && (
-                      <Box padding="200" background="bg-surface-success-subdued" borderRadius="100">
-                        <Text variant="bodySm" color="success">
-                          ✅ Auto-rotation is enabled! The system will automatically rotate prices every minute in the background.
-                        </Text>
-                      </Box>
+                      <>
+                        <Select
+                          label="Rotation Interval"
+                          helpText="How often prices should automatically rotate"
+                          name="rotationIntervalMinutes"
+                          options={[
+                            { label: '1 minute', value: '1' },
+                            { label: '2 minutes', value: '2' },
+                            { label: '3 minutes', value: '3' },
+                            { label: '5 minutes', value: '5' },
+                            { label: '10 minutes', value: '10' },
+                            { label: '15 minutes', value: '15' },
+                            { label: '30 minutes', value: '30' },
+                            { label: '60 minutes (1 hour)', value: '60' }
+                          ]}
+                          value={rotationInterval.toString()}
+                          onChange={(value) => {
+                            const newInterval = parseInt(value);
+                            userSelectedValue.current = newInterval;
+                            setRotationInterval(newInterval);
+                            setIsInitialized(true); // Prevent reset while user is selecting
+                            console.log("🔄 Rotation interval changed to:", newInterval);
+                          }}
+                        />
+                        <Box padding="200" background="bg-surface-info-subdued" borderRadius="100">
+                          <BlockStack gap="200">
+                            <Text variant="bodySm" color="info">
+                              ℹ️ <strong>Auto-rotation status:</strong>
+                            </Text>
+                            {typeof window !== 'undefined' && (
+                              <Text variant="bodySm" color="subdued">
+                                {window.location.hostname.includes('vercel.app') 
+                                  ? "⚠️ Vercel free plan doesn't support automatic rotation. Please use the 'Manual Price Rotation' button below, or upgrade to Vercel Pro for automatic rotation."
+                                  : `✅ Auto-rotation is enabled! The system will automatically rotate prices every ${rotationInterval} minute${rotationInterval !== 1 ? 's' : ''} in the background.`}
+                              </Text>
+                            )}
+                          </BlockStack>
+                        </Box>
+                      </>
                     )}
 
                     <Button submit variant="primary">
@@ -697,6 +885,15 @@ export default function AppSettings() {
               >
                 {isResettingPrices ? "Resetting Prices..." : "Reset All Prices"}
               </Button>
+              
+              <Button 
+                onClick={() => setShowClearAnalyticsModal(true)}
+                loading={isClearingAnalytics}
+                variant="secondary"
+                tone="critical"
+              >
+                {isClearingAnalytics ? "Clearing..." : "Clear Analytics Data"}
+              </Button>
             </InlineStack>
             
             <Box padding="300" background="bg-surface-info-subdued" borderRadius="100">
@@ -714,6 +911,41 @@ export default function AppSettings() {
             </Box>
           </BlockStack>
         </Card>
+
+        {/* Clear Analytics Modal */}
+        <Modal
+          open={showClearAnalyticsModal}
+          onClose={() => setShowClearAnalyticsModal(false)}
+          title="Clear All Analytics Data"
+          primaryAction={{
+            content: "Clear All Data",
+            onAction: handleClearAnalytics,
+            loading: isClearingAnalytics,
+            destructive: true,
+          }}
+          secondaryActions={[
+            {
+              content: "Cancel",
+              onAction: () => setShowClearAnalyticsModal(false),
+            },
+          ]}
+        >
+          <Modal.Section>
+            <BlockStack gap="300">
+              <Text variant="bodyMd" as="p">
+                Are you sure you want to clear all analytics data? This will permanently delete:
+              </Text>
+              <Text variant="bodyMd" as="ul">
+                <li>All view events</li>
+                <li>All conversion events</li>
+                <li>All analytics history</li>
+              </Text>
+              <Text variant="bodyMd" as="p" tone="critical">
+                This action cannot be undone.
+              </Text>
+            </BlockStack>
+          </Modal.Section>
+        </Modal>
       </BlockStack>
     </Page>
   );
