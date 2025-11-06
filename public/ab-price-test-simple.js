@@ -195,8 +195,14 @@ if (window.ABPriceTestInitialized) {
         
         if (!productId) {
             log('❌ Product ID missing, cannot track view');
-            console.error('[A/B Price Test] Cannot track - productId is missing');
+            console.error('[A/B Price Test] ❌ Cannot track - productId is missing');
             return;
+        }
+        
+        // Validate price
+        if (!price || price <= 0) {
+            log('⚠️ Invalid price, using default price of 0');
+            price = 0;
         }
         
         // Check if we've already tracked this view
@@ -385,9 +391,13 @@ if (window.ABPriceTestInitialized) {
     
     // Track product page view (when user visits a specific product page)
     async function trackProductPageView() {
-        // Wait longer for page to fully load, test prices to be applied, and Shopify metadata to be available
-        // Test prices might be applied dynamically, so we need to wait for them
-        await new Promise(resolve => setTimeout(resolve, 1000)); // Increased from 500ms to 1000ms
+        try {
+            log('📊 Starting product page view tracking...');
+            console.log('[A/B Price Test] 📊 Starting product page view tracking...');
+            
+            // Wait longer for page to fully load, test prices to be applied, and Shopify metadata to be available
+            // Test prices might be applied dynamically, so we need to wait for them
+            await new Promise(resolve => setTimeout(resolve, 1000)); // Increased from 500ms to 1000ms
         
         // Get product ID from Shopify metadata
         let productIdRaw = null;
@@ -529,43 +539,49 @@ if (window.ABPriceTestInitialized) {
             })));
         }
         
-        // CRITICAL: Pick the price that's MOST DIFFERENT from original (most likely to be test price)
-        // But only if we found prices that differ from base
+        // CRITICAL: Determine the actual displayed price
+        // Strategy: Use the most frequent price found (most likely to be the actual displayed price)
+        // Only use "most different" logic if we find prices that are SIGNIFICANTLY different (>$0.10)
         let actualDisplayedPrice = null;
-        const pricesWithDiff = allFoundPrices.map(p => ({
-            ...p,
-            diffFromOriginal: Math.abs(p.price - originalPrice)
-        })).filter(p => p.diffFromOriginal > 0.01); // Filter out prices that match base
         
-        if (pricesWithDiff.length > 0) {
-            // Found prices that differ from base - use the one with largest difference
-            // But also check if any are significantly different (more than $0.10)
-            const significantDiff = pricesWithDiff.filter(p => p.diffFromOriginal > 0.10);
-            if (significantDiff.length > 0) {
-                // Use the price with the largest difference (most likely to be test price)
-                actualDisplayedPrice = significantDiff.sort((a, b) => b.diffFromOriginal - a.diffFromOriginal)[0].price;
-                log(`✅ Selected test price (most different from base): $${actualDisplayedPrice} (diff: $${significantDiff[0].diffFromOriginal.toFixed(2)})`);
-            } else {
-                // Small differences, use the one with largest difference anyway
-                actualDisplayedPrice = pricesWithDiff.sort((a, b) => b.diffFromOriginal - a.diffFromOriginal)[0].price;
-                log(`✅ Selected test price (smallest difference found): $${actualDisplayedPrice}`);
-            }
+        if (allFoundPrices.length === 0) {
+            actualDisplayedPrice = originalPrice;
+            log('⚠️ No prices found, using originalPrice:', originalPrice);
         } else {
-            // No prices found that differ from base - likely viewing base price
-            // Use the most recent/frequent price found, or originalPrice
-            if (allFoundPrices.length > 0) {
-                // Find the price that appears most frequently
-                const priceFrequency = {};
-                allFoundPrices.forEach(p => {
-                    const key = p.price.toFixed(2);
-                    priceFrequency[key] = (priceFrequency[key] || 0) + 1;
-                });
-                const mostFrequent = Object.entries(priceFrequency).sort((a, b) => b[1] - a[1])[0];
-                actualDisplayedPrice = parseFloat(mostFrequent[0]);
-                log(`✅ Selected most frequent price (likely base): $${actualDisplayedPrice} (appeared ${mostFrequent[1]} times)`);
+            // Find the price that appears most frequently (most likely to be the actual displayed price)
+            const priceFrequency = {};
+            allFoundPrices.forEach(p => {
+                const key = p.price.toFixed(2);
+                priceFrequency[key] = (priceFrequency[key] || 0) + 1;
+            });
+            
+            // Get prices sorted by frequency (most frequent first)
+            const sortedByFrequency = Object.entries(priceFrequency)
+                .map(([price, count]) => ({ price: parseFloat(price), count }))
+                .sort((a, b) => b.count - a.count);
+            
+            // Check if any prices are significantly different from the original (likely test prices)
+            const pricesWithDiff = allFoundPrices
+                .map(p => ({ ...p, diffFromOriginal: Math.abs(p.price - originalPrice) }))
+                .filter(p => p.diffFromOriginal > 0.10); // Only consider prices that differ by more than $0.10
+            
+            if (pricesWithDiff.length > 0) {
+                // Found prices significantly different from base - likely test prices
+                // Use the one with largest difference (most likely to be the test price being displayed)
+                const significantDiff = pricesWithDiff.filter(p => p.diffFromOriginal > 0.10);
+                if (significantDiff.length > 0) {
+                    actualDisplayedPrice = significantDiff.sort((a, b) => b.diffFromOriginal - a.diffFromOriginal)[0].price;
+                    log(`✅ Selected test price (significantly different from base): $${actualDisplayedPrice} (diff: $${significantDiff[0].diffFromOriginal.toFixed(2)})`);
+                } else {
+                    // Use most frequent price
+                    actualDisplayedPrice = sortedByFrequency[0].price;
+                    log(`✅ Selected most frequent price: $${actualDisplayedPrice} (appeared ${sortedByFrequency[0].count} times)`);
+                }
             } else {
-                actualDisplayedPrice = originalPrice;
-                log('⚠️ No prices found, using originalPrice:', originalPrice);
+                // No prices significantly different from base - likely viewing base price
+                // Use the most frequent price
+                actualDisplayedPrice = sortedByFrequency[0].price;
+                log(`✅ Selected most frequent price (likely base): $${actualDisplayedPrice} (appeared ${sortedByFrequency[0].count} times)`);
             }
         }
         
@@ -625,71 +641,419 @@ if (window.ABPriceTestInitialized) {
                 log('Test info response:', JSON.stringify(testData, null, 2));
                 
                 if (testData.isTestPrice && testData.testId) {
-                    // CRITICAL FIX: Use the server-assigned variant directly instead of trying to detect from DOM
-                    // The server already knows which variant was assigned based on traffic distribution
-                    // This is the most reliable way to track views correctly
+                    // CRITICAL: Read the FINAL displayed price RIGHT NOW (after all dynamic updates)
+                    // This ensures we're reading the price at the exact moment we're tracking
+                    // IMPORTANT: We'll get the server-assigned variant first, then use that to validate the price
                     const allVariants = testData.allVariants || [];
-                    const serverPrice = testData.price; // Server-assigned price
-                    let assignedVariantId = null;
-                    let assignedPrice = serverPrice || originalPrice;
+                    const serverPrice = testData.price;
+                    const serverVariant = testData.variant;
+                    
+                    // Get expected price range from variants (to filter out unrelated prices)
+                    const allVariantPrices = allVariants.map(v => v.price);
+                    const minExpectedPrice = Math.min(...allVariantPrices, serverPrice || 0) - 5; // Allow $5 below minimum
+                    const maxExpectedPrice = Math.max(...allVariantPrices, serverPrice || 0) + 5; // Allow $5 above maximum
+                    
+                    log(`🎯 Expected price range: $${minExpectedPrice.toFixed(2)} - $${maxExpectedPrice.toFixed(2)} (based on variants: ${allVariantPrices.join(', ')})`);
+                    
+                    let finalDisplayedPrice = null;
+                    const finalPriceSelectors = [
+                        '.price--current, .price-current, .current-price',
+                        '.product__price, .product-price',
+                        '[data-product-price], [data-price]',
+                        '[itemprop="price"]'
+                    ];
+                    
+                    // Collect all prices found, then filter by expected range
+                    const allFoundPrices = [];
+                    
+                    // Try reading price multiple times (in case of dynamic updates)
+                    for (let attempt = 0; attempt < 3; attempt++) {
+                        if (attempt > 0) {
+                            await new Promise(resolve => setTimeout(resolve, 100)); // Small delay
+                        }
+                        
+                        for (const selector of finalPriceSelectors) {
+                            const elements = document.querySelectorAll(selector);
+                            for (const element of elements) {
+                                const price = extractPrice(element.textContent);
+                                if (price && price > 0) {
+                                    allFoundPrices.push({
+                                        price: price,
+                                        selector: selector,
+                                        attempt: attempt + 1,
+                                        element: element
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Filter prices to only those within expected range (exclude unrelated prices like $25)
+                    const validPrices = allFoundPrices.filter(p => 
+                        p.price >= minExpectedPrice && p.price <= maxExpectedPrice
+                    );
+                    
+                    log(`💰 Found ${allFoundPrices.length} prices total, ${validPrices.length} within expected range:`, {
+                        allPrices: allFoundPrices.map(p => ({ price: p.price, selector: p.selector })),
+                        validPrices: validPrices.map(p => ({ price: p.price, selector: p.selector }))
+                    });
+                    
+                    // If we have valid prices, use the most frequent one (most likely to be the actual displayed price)
+                    if (validPrices.length > 0) {
+                        const priceFreq = {};
+                        validPrices.forEach(p => {
+                            const key = p.price.toFixed(2);
+                            priceFreq[key] = (priceFreq[key] || 0) + 1;
+                        });
+                        const mostFrequent = Object.entries(priceFreq).sort((a, b) => b[1] - a[1])[0];
+                        finalDisplayedPrice = parseFloat(mostFrequent[0]);
+                        log(`✅ Selected most frequent valid price: $${finalDisplayedPrice} (appeared ${mostFrequent[1]} times)`);
+                    } else {
+                        // No valid prices found in expected range - try to use what we have
+                        log(`⚠️ No valid prices in expected range, trying fallbacks...`);
+                        
+                        // First, try originalPrice if it's reasonable (even if outside expected range)
+                        if (originalPrice && originalPrice > 0 && originalPrice < 1000) {
+                            finalDisplayedPrice = originalPrice;
+                            log(`✅ Using originalPrice from DOM (fallback): $${finalDisplayedPrice}`);
+                        } else if (serverPrice && serverPrice > 0 && serverPrice < 1000) {
+                            // Server price is reasonable, use it
+                            finalDisplayedPrice = serverPrice;
+                            log(`⚠️ Using server-assigned price (fallback): $${finalDisplayedPrice}`);
+                        } else {
+                            // Use the actual base price from variants as fallback (most likely what user sees)
+                            const baseVariantPrice = allVariants.find(v => v.isBaseVariant || v.id === 0)?.price;
+                            if (baseVariantPrice && baseVariantPrice > 0) {
+                                finalDisplayedPrice = baseVariantPrice;
+                                log(`⚠️ Using base variant price from server (fallback): $${finalDisplayedPrice}`);
+                            } else if (actualDisplayedPrice && actualDisplayedPrice > 0 && actualDisplayedPrice < 1000) {
+                                finalDisplayedPrice = actualDisplayedPrice;
+                                log(`⚠️ Using earlier detected price (fallback): $${finalDisplayedPrice}`);
+                            } else {
+                                // Last resort - use server price even if outside range
+                                finalDisplayedPrice = serverPrice || originalPrice || 0;
+                                log(`⚠️ Using last resort price: $${finalDisplayedPrice}`);
+                            }
+                        }
+                    }
+                    
+                    // Use the final displayed price if found, otherwise use the earlier detected price, or server price, or originalPrice
+                    const priceToCompare = finalDisplayedPrice || actualDisplayedPrice || serverPrice || originalPrice;
+                    
+                    if (!priceToCompare || priceToCompare <= 0) {
+                        log('❌ ERROR: No valid price found for comparison! Using server price as last resort.');
+                        // Force use server price if available
+                        if (serverPrice && serverPrice > 0) {
+                            finalDisplayedPrice = serverPrice;
+                            log(`⚠️ Using server price as fallback: $${serverPrice}`);
+                        } else {
+                            log('❌ CRITICAL: No price available at all! Cannot track view.');
+                            return; // Exit - can't track without a price
+                        }
+                    }
+                    
+                    log(`💰 Final price comparison values: finalDisplayedPrice=$${finalDisplayedPrice}, actualDisplayedPrice=$${actualDisplayedPrice}, priceToCompare=$${priceToCompare}, serverPrice=$${serverPrice}`);
+                    
+                    // CRITICAL FIX: Match the ACTUAL displayed price to the correct variant
+                    // The server assigns variants based on traffic, but we need to track based on what the user actually sees
+                    // However, if price detection fails, we should trust the server-assigned variant
+                    // allVariants, serverPrice, and serverVariant are already defined above
+                    
+                    // Get the ACTUAL base price from the server (not from DOM which might be wrong)
+                    const baseVariant = allVariants.find(v => v.isBaseVariant === true || v.id === 0 || v.variantName === "Base Price");
+                    const actualBasePrice = baseVariant ? baseVariant.price : originalPrice;
                     
                     log('🔍 Server response:', {
                         serverAssignedPrice: serverPrice,
+                        earlierDetectedPrice: actualDisplayedPrice,
+                        finalDisplayedPrice: priceToCompare,
+                        originalPriceFromDOM: originalPrice,
+                        actualBasePriceFromServer: actualBasePrice,
                         variant: testData.variant,
                         variantName: testData.variantName,
                         allVariants: allVariants.map(v => ({ name: v.variantName, price: v.price, id: v.id, isBase: v.isBaseVariant }))
                     });
                     
-                    // Check if server returned the assigned variant directly
-                    if (testData.variant && testData.variant.id !== undefined) {
-                        // Server assigned a specific variant - USE IT DIRECTLY
-                        const assignedVariant = testData.variant;
-                        assignedVariantId = assignedVariant.id === 0 ? null : assignedVariant.id;
-                        assignedPrice = assignedVariant.price;
-                        log('✅ Using server-assigned variant directly:', {
-                            variantName: assignedVariant.variantName,
-                            variantId: assignedVariant.id,
-                            price: assignedVariant.price
+                    // STEP 1: Check if displayed price matches base price FROM SERVER (within $0.01 tolerance)
+                    // Use the server's base price, not the DOM's originalPrice (which might already be a test price)
+                    // Use the FINAL displayed price we just read
+                    const priceDiffFromBase = Math.abs(priceToCompare - actualBasePrice);
+                    if (priceDiffFromBase < 0.01) {
+                        // User is seeing the base price - track as base price view (variantId: null)
+                        log('✅ FINAL displayed price matches base price FROM SERVER - tracking as BASE PRICE view:', {
+                            finalDisplayedPrice: priceToCompare,
+                            earlierDetectedPrice: actualDisplayedPrice,
+                            basePriceFromServer: actualBasePrice,
+                            basePriceFromDOM: originalPrice,
+                            difference: priceDiffFromBase.toFixed(2)
                         });
-                        trackView(productId, testData.testId, assignedVariantId, assignedPrice);
+                        trackView(productId, testData.testId, null, actualBasePrice);
                         return; // Exit early - we're done!
-                    } else if (testData.variantName && serverPrice) {
-                        // Server returned variant name and price - match to variant by name
-                        const matchedVariant = allVariants.find(v => v.variantName === testData.variantName);
-                        if (matchedVariant) {
-                            assignedVariantId = matchedVariant.id === 0 ? null : matchedVariant.id;
-                            assignedPrice = matchedVariant.price;
-                            log('✅ Matched server variant name to variant:', {
-                                variantName: matchedVariant.variantName,
-                                variantId: matchedVariant.id,
-                                price: matchedVariant.price
+                    }
+                    
+                    // STEP 1b: Check if displayed price matches DOM original price (user might be seeing actual base price)
+                    // IMPORTANT: But FIRST check if it matches any test variant - prioritize test variants!
+                    // Only treat as base if it matches DOM original AND is NOT close to any test variant
+                    const priceDiffFromDOMOriginal = Math.abs(priceToCompare - originalPrice);
+                    
+                    // Check ALL variants first (including test variants) before deciding it's base
+                    const allVariantsWithDiffs = allVariants.map(v => ({
+                        variant: v,
+                        diff: Math.abs(v.price - priceToCompare)
+                    })).sort((a, b) => a.diff - b.diff);
+                    
+                    const closestVariantMatch = allVariantsWithDiffs[0];
+                    
+                    log('🔍 Price matching analysis:', {
+                        priceToCompare: priceToCompare,
+                        originalPrice: originalPrice,
+                        actualBasePrice: actualBasePrice,
+                        closestVariant: closestVariantMatch ? {
+                            name: closestVariantMatch.variant.variantName,
+                            price: closestVariantMatch.variant.price,
+                            diff: closestVariantMatch.diff.toFixed(2),
+                            isBase: closestVariantMatch.variant.isBaseVariant
+                        } : null,
+                        allVariants: allVariantsWithDiffs.map(v => ({
+                            name: v.variant.variantName,
+                            price: v.variant.price,
+                            diff: v.diff.toFixed(2)
+                        }))
+                    });
+                    
+                    // If price matches DOM original AND closest match is NOT a test variant (or diff is large), it's base
+                    if (priceDiffFromDOMOriginal < 0.01) {
+                        // Check if the closest match is a test variant with small difference
+                        const isCloseToTestVariant = closestVariantMatch && 
+                            !closestVariantMatch.variant.isBaseVariant && 
+                            closestVariantMatch.variant.id !== 0 &&
+                            closestVariantMatch.variant.variantName !== "Base Price" &&
+                            closestVariantMatch.diff < 0.50; // Within $0.50 of a test variant
+                        
+                        if (!isCloseToTestVariant) {
+                            // Not close to any test variant, so it's the base price
+                            log('✅ FINAL displayed price matches DOM original price (not close to test variants) - tracking as BASE PRICE view:', {
+                                finalDisplayedPrice: priceToCompare,
+                                earlierDetectedPrice: actualDisplayedPrice,
+                                basePriceFromDOM: originalPrice,
+                                basePriceFromServer: actualBasePrice,
+                                differenceFromDOM: priceDiffFromDOMOriginal.toFixed(2),
+                                differenceFromServer: priceDiffFromBase.toFixed(2),
+                                closestVariantDiff: closestVariantMatch ? closestVariantMatch.diff.toFixed(2) : 'N/A'
                             });
-                            trackView(productId, testData.testId, assignedVariantId, assignedPrice);
+                            trackView(productId, testData.testId, null, actualBasePrice);
+                            return; // Exit early - we're done!
+                        } else {
+                            log('⚠️ FINAL displayed price matches DOM original but is close to a test variant - will match to variant instead');
+                        }
+                    }
+                    
+                    // STEP 2: Match displayed price to a test variant (within $0.01 tolerance for exact match)
+                    // PRIORITIZE test variants - check them FIRST before base
+                    // Use the FINAL displayed price we just read
+                    const allTestVariants = allVariants.filter(v => !v.isBaseVariant && v.id !== 0 && v.variantName !== "Base Price");
+                    
+                    // First check test variants for exact match
+                    let matchedVariant = allTestVariants.find(v => {
+                        const priceDiff = Math.abs(v.price - priceToCompare);
+                        return priceDiff < 0.01;
+                    });
+                    
+                    // If no test variant match, check base variant
+                    if (!matchedVariant) {
+                        const baseVariant = allVariants.find(v => v.isBaseVariant || v.id === 0 || v.variantName === "Base Price");
+                        if (baseVariant) {
+                            const priceDiff = Math.abs(baseVariant.price - priceToCompare);
+                            if (priceDiff < 0.01) {
+                                matchedVariant = baseVariant;
+                            }
+                        }
+                    }
+                    
+                    if (matchedVariant) {
+                        const isBase = matchedVariant.isBaseVariant === true || matchedVariant.id === 0 || matchedVariant.variantName === "Base Price";
+                        const variantId = isBase ? null : (matchedVariant.id === 0 ? null : matchedVariant.id);
+                        
+                        log('✅ FINAL displayed price matches variant exactly - tracking as view:', {
+                            finalDisplayedPrice: priceToCompare,
+                            earlierDetectedPrice: actualDisplayedPrice,
+                            variantName: matchedVariant.variantName,
+                            variantId: variantId,
+                            variantPrice: matchedVariant.price,
+                            isBase: isBase,
+                            matchType: isBase ? 'BASE PRICE' : 'TEST VARIANT'
+                        });
+                        trackView(productId, testData.testId, variantId, matchedVariant.price);
+                        return; // Exit early
+                    }
+                    
+                    // STEP 3: If no exact match, find the closest variant (within $1.00 tolerance for better matching)
+                    // Prioritize test variants over base price
+                    // Use the FINAL displayed price we just read
+                    // allTestVariants already defined above
+                    let closestVariant = null;
+                    let closestDiff = Infinity;
+                    
+                    // First, try to find closest test variant (within $1.00)
+                    for (const variant of allTestVariants) {
+                        const diff = Math.abs(variant.price - priceToCompare);
+                        if (diff < closestDiff && diff < 1.00) {
+                            closestDiff = diff;
+                            closestVariant = variant;
+                        }
+                    }
+                    
+                    // If no test variant found, check base variant
+                    if (!closestVariant) {
+                        const baseVariant = allVariants.find(v => v.isBaseVariant || v.id === 0 || v.variantName === "Base Price");
+                        if (baseVariant) {
+                            const diff = Math.abs(baseVariant.price - priceToCompare);
+                            if (diff < 1.00) {
+                                closestDiff = diff;
+                                closestVariant = baseVariant;
+                            }
+                        }
+                    }
+                    
+                    if (closestVariant) {
+                        const isBase = closestVariant.isBaseVariant === true || closestVariant.id === 0 || closestVariant.variantName === "Base Price";
+                        const variantId = isBase ? null : (closestVariant.id === 0 ? null : closestVariant.id);
+                        
+                        log('✅ FINAL displayed price closest to variant (within $1.00) - tracking as VARIANT view:', {
+                            finalDisplayedPrice: priceToCompare,
+                            earlierDetectedPrice: actualDisplayedPrice,
+                            variantName: closestVariant.variantName,
+                            variantId: variantId,
+                            variantPrice: closestVariant.price,
+                            difference: closestDiff.toFixed(2),
+                            isBase: isBase
+                        });
+                        trackView(productId, testData.testId, variantId, closestVariant.price);
+                        return; // Exit early
+                    }
+                    
+                    // STEP 4: If displayed price doesn't match any variant within $1.00, check if it's significantly closer to base
+                    // Only track as base if it's MUCH closer to base than to any test variant (difference > $2.00)
+                    const minDiffToTestVariant = allTestVariants.length > 0 
+                        ? Math.min(...allTestVariants.map(v => Math.abs(v.price - priceToCompare)))
+                        : Infinity;
+                    
+                    // Only track as base if:
+                    // 1. Price is significantly closer to base than to any test variant (difference > $2.00)
+                    // 2. AND price is within $2.00 of base price
+                    const diffBetweenBaseAndTest = minDiffToTestVariant - priceDiffFromBase;
+                    if (diffBetweenBaseAndTest > 2.00 && priceDiffFromBase < 2.00) {
+                        log('⚠️ FINAL displayed price significantly closer to base than test variants - tracking as BASE PRICE view:', {
+                            finalDisplayedPrice: priceToCompare,
+                            earlierDetectedPrice: actualDisplayedPrice,
+                            basePriceFromServer: actualBasePrice,
+                            basePriceFromDOM: originalPrice,
+                            differenceFromBase: priceDiffFromBase.toFixed(2),
+                            minDiffToTestVariant: minDiffToTestVariant.toFixed(2),
+                            diffBetweenBaseAndTest: diffBetweenBaseAndTest.toFixed(2)
+                        });
+                        trackView(productId, testData.testId, null, actualBasePrice);
+                        return; // Exit early
+                    }
+                    
+                    // STEP 5: Check if price is closer to base OR test variants
+                    // CRITICAL: Only track as base if price is MUCH closer to base than to ANY test variant
+                    // Otherwise, prefer test variants (they're more specific)
+                    const allTestVariantsForFallback = allVariants.filter(v => !v.isBaseVariant && v.id !== 0 && v.variantName !== "Base Price");
+                    const minDiffToTestVariantForFallback = allTestVariantsForFallback.length > 0 
+                        ? Math.min(...allTestVariantsForFallback.map(v => Math.abs(v.price - priceToCompare)))
+                        : Infinity;
+                    
+                    // Only track as base if:
+                    // 1. Price is significantly closer to base (difference > $1.00)
+                    // 2. AND price is within $2 of base
+                    // This prevents incorrectly tracking test variant views as base
+                    const diffBetweenBaseAndTestForFallback = minDiffToTestVariantForFallback - priceDiffFromBase;
+                    if (diffBetweenBaseAndTestForFallback > 1.00 && priceDiffFromBase < 2.00) {
+                        log('✅ Price is significantly closer to base than test variants - tracking as BASE PRICE view:', {
+                            finalDisplayedPrice: priceToCompare,
+                            basePrice: actualBasePrice,
+                            priceDiffFromBase: priceDiffFromBase.toFixed(2),
+                            minDiffToTestVariant: minDiffToTestVariantForFallback.toFixed(2),
+                            diffBetweenBaseAndTest: diffBetweenBaseAndTestForFallback.toFixed(2)
+                        });
+                        trackView(productId, testData.testId, null, actualBasePrice);
+                        return; // Exit early
+                    }
+                    
+                    // If price is closer to a test variant, use that instead
+                    if (minDiffToTestVariantForFallback < priceDiffFromBase && minDiffToTestVariantForFallback < 2.00) {
+                        const closestTestVariant = allTestVariantsForFallback.find(v => 
+                            Math.abs(v.price - priceToCompare) === minDiffToTestVariantForFallback
+                        );
+                        if (closestTestVariant) {
+                            const variantId = closestTestVariant.id === 0 ? null : closestTestVariant.id;
+                            log('✅ Price is closer to test variant than base - tracking as TEST VARIANT view:', {
+                                finalDisplayedPrice: priceToCompare,
+                                variantName: closestTestVariant.variantName,
+                                variantPrice: closestTestVariant.price,
+                                variantId: variantId,
+                                diffFromVariant: minDiffToTestVariantForFallback.toFixed(2),
+                                diffFromBase: priceDiffFromBase.toFixed(2)
+                            });
+                            trackView(productId, testData.testId, variantId, closestTestVariant.price);
                             return; // Exit early
                         }
                     }
                     
-                    // Fallback: Match server price to variant
-                    if (serverPrice) {
-                        const matchedVariant = allVariants.find(v => Math.abs(v.price - serverPrice) < 0.01);
-                        if (matchedVariant) {
-                            const isBase = matchedVariant.isBaseVariant === true || matchedVariant.id === 0 || matchedVariant.variantName === "Base Price";
-                            assignedVariantId = isBase ? null : (matchedVariant.id === 0 ? null : matchedVariant.id);
-                            assignedPrice = matchedVariant.price;
-                            log('✅ Matched server price to variant:', {
-                                variantName: matchedVariant.variantName,
-                                variantId: matchedVariant.id,
-                                price: matchedVariant.price,
-                                isBase: isBase
-                            });
-                            trackView(productId, testData.testId, assignedVariantId, assignedPrice);
-                            return; // Exit early
+                    // STEP 6: Final fallback - use server-assigned variant ONLY if it matches the displayed price closely
+                    log('⚠️ Could not match FINAL displayed price to any variant, checking server-assigned variant:', {
+                        finalDisplayedPrice: priceToCompare,
+                        earlierDetectedPrice: actualDisplayedPrice,
+                        serverPrice: serverPrice,
+                        serverVariant: serverVariant,
+                        serverVariantName: testData.variantName,
+                        priceDiffFromBase: priceDiffFromBase.toFixed(2),
+                        minDiffToTestVariant: minDiffToTestVariantForFallback.toFixed(2)
+                    });
+                    
+                    if (serverVariant && serverVariant.id !== undefined) {
+                        const assignedVariant = serverVariant;
+                        const serverVariantPriceDiff = Math.abs(assignedVariant.price - priceToCompare);
+                        
+                        // Only use server variant if its price is close to detected price (within $2)
+                        // Otherwise, default to base price (safer assumption)
+                        if (serverVariantPriceDiff < 2.00) {
+                            const isBase = assignedVariant.isBaseVariant === true || assignedVariant.id === 0 || assignedVariant.variantName === "Base Price" || assignedVariant.variantName === "Original Price";
+                            const variantId = isBase ? null : (assignedVariant.id === 0 ? null : assignedVariant.id);
+                            
+                            log(`✅ Using server-assigned variant (price matches closely): ${assignedVariant.variantName} (ID: ${variantId}, isBase: ${isBase}, price: $${assignedVariant.price}, diff: $${serverVariantPriceDiff.toFixed(2)})`);
+                            trackView(productId, testData.testId, variantId, assignedVariant.price);
+                        } else {
+                            // Server variant price doesn't match detected price - default to base
+                            log(`⚠️ Server variant price ($${assignedVariant.price}) doesn't match detected price ($${priceToCompare}), defaulting to BASE PRICE`);
+                            trackView(productId, testData.testId, null, actualBasePrice);
+                        }
+                    } else if (serverPrice && Math.abs(serverPrice - priceToCompare) < 2.00) {
+                        // Server returned a price that matches detected price - try to match to variant
+                        const matchedVariantByPrice = allVariants.find(v => Math.abs(v.price - serverPrice) < 0.01);
+                        if (matchedVariantByPrice) {
+                            const isBase = matchedVariantByPrice.isBaseVariant === true || matchedVariantByPrice.id === 0;
+                            const variantId = isBase ? null : (matchedVariantByPrice.id === 0 ? null : matchedVariantByPrice.id);
+                            log(`✅ Matched server price $${serverPrice} to variant: ${matchedVariantByPrice.variantName} (ID: ${variantId})`);
+                            trackView(productId, testData.testId, variantId, matchedVariantByPrice.price);
+                        } else {
+                            log(`⚠️ Could not match server price $${serverPrice} to any variant, tracking as base`);
+                            trackView(productId, testData.testId, null, actualBasePrice);
+                        }
+                    } else {
+                        // No good match - use server-assigned variant if available, otherwise default to base
+                        if (serverVariant && serverVariant.id !== undefined) {
+                            const assignedVariant = serverVariant;
+                            const isBase = assignedVariant.isBaseVariant === true || assignedVariant.id === 0 || assignedVariant.variantName === "Base Price" || assignedVariant.variantName === "Original Price";
+                            const variantId = isBase ? null : (assignedVariant.id === 0 ? null : assignedVariant.id);
+                            log(`⚠️ No price match, using server-assigned variant as fallback: ${assignedVariant.variantName} (ID: ${variantId})`);
+                            trackView(productId, testData.testId, variantId, assignedVariant.price);
+                        } else {
+                            log(`⚠️ No reliable match found, defaulting to BASE PRICE`);
+                            trackView(productId, testData.testId, null, actualBasePrice);
                         }
                     }
-                    
-                    // Last resort: Use server price but track as base
-                    log('⚠️ Could not match server data to variant, using server price and tracking as base');
-                    trackView(productId, testData.testId, null, serverPrice || originalPrice);
                     return; // Exit early
                 } else {
                     // No active test - still track the view (for base price analytics)
@@ -718,14 +1082,26 @@ if (window.ABPriceTestInitialized) {
                 trackView(productId, null, null, originalPrice);
             }
         } catch (error) {
-            log('Error checking test info for product page:', error);
-            console.error('[A/B Price Test] Network error:', error);
+            log('❌ Error checking test info for product page:', error);
+            console.error('[A/B Price Test] ❌ Network/Error:', error);
+            console.error('[A/B Price Test] Error stack:', error.stack);
             log('This might be due to network issues or wrong APP_URL');
             
-            // Still track the view even if API fails
-            trackView(productId, null, null, originalPrice);
+            // Still track the view even if API fails - ALWAYS track something
+            if (productId) {
+                log('⚠️ Tracking view without test info due to error');
+                trackView(productId, null, null, originalPrice || 0);
+            } else {
+                console.error('[A/B Price Test] ❌ CRITICAL: Cannot track - productId is missing');
+            }
         }
+    } catch (error) {
+        // Outer try-catch for the entire function
+        log('❌ Error in trackProductPageView:', error);
+        console.error('[A/B Price Test] ❌ Fatal error in trackProductPageView:', error);
+        console.error('[A/B Price Test] Error stack:', error.stack);
     }
+}
     
     // Track product view with test/variant detection
     
@@ -770,7 +1146,7 @@ if (window.ABPriceTestInitialized) {
             
             if (!currentPrice) return;
             
-            // Get test info for conversion tracking
+            // Get test info for conversion tracking - use same logic as view tracking
             try {
                 const sessionId = getSessionId();
                 const shop = getShopDomain();
@@ -780,12 +1156,45 @@ if (window.ABPriceTestInitialized) {
                 if (response.ok) {
                     const testData = await response.json();
                     
-                    if (testData.isTestPrice && testData.testId && testData.variant) {
-                        // Track conversion with test info
-                        // Note: If variant.id is 0, it's a virtual base variant, use null instead
-                        const variantId = testData.variant.id === 0 ? null : testData.variant.id;
-                        trackConversion(productId, testData.testId, variantId, currentPrice, testData.price || currentPrice);
-                        log('Tracked conversion with test info - Product:', productId, 'Test:', testData.testId, 'Variant:', variantId, 'Price:', testData.price);
+                    if (testData.isTestPrice && testData.testId) {
+                        // Match the displayed price to the correct variant (same logic as view tracking)
+                        const allVariants = testData.allVariants || [];
+                        const baseVariant = allVariants.find(v => v.isBaseVariant === true || v.id === 0 || v.variantName === "Base Price");
+                        const actualBasePrice = baseVariant ? baseVariant.price : currentPrice;
+                        
+                        // Check if current price matches base price
+                        const priceDiffFromBase = Math.abs(currentPrice - actualBasePrice);
+                        if (priceDiffFromBase < 0.01) {
+                            // Base price conversion
+                            trackConversion(productId, testData.testId, null, currentPrice, actualBasePrice);
+                            log('✅ Tracked BASE PRICE conversion - Product:', productId, 'Test:', testData.testId, 'Price:', actualBasePrice);
+                            return;
+                        }
+                        
+                        // Try to match to test variants
+                        const matchedVariant = allVariants.find(v => {
+                            const priceDiff = Math.abs(v.price - currentPrice);
+                            return priceDiff < 0.01;
+                        });
+                        
+                        if (matchedVariant) {
+                            const isBase = matchedVariant.isBaseVariant === true || matchedVariant.id === 0 || matchedVariant.variantName === "Base Price";
+                            const variantId = isBase ? null : (matchedVariant.id === 0 ? null : matchedVariant.id);
+                            trackConversion(productId, testData.testId, variantId, currentPrice, matchedVariant.price);
+                            log('✅ Tracked TEST VARIANT conversion - Product:', productId, 'Test:', testData.testId, 'Variant:', variantId, 'Price:', matchedVariant.price);
+                        } else {
+                            // Fallback to server-assigned variant
+                            if (testData.variant && testData.variant.id !== undefined) {
+                                const assignedVariant = testData.variant;
+                                const isBase = assignedVariant.isBaseVariant === true || assignedVariant.id === 0 || assignedVariant.variantName === "Base Price" || assignedVariant.variantName === "Original Price";
+                                const variantId = isBase ? null : (assignedVariant.id === 0 ? null : assignedVariant.id);
+                                trackConversion(productId, testData.testId, variantId, currentPrice, assignedVariant.price);
+                                log('✅ Tracked conversion with server-assigned variant - Product:', productId, 'Test:', testData.testId, 'Variant:', variantId, 'Price:', assignedVariant.price);
+                            } else {
+                                trackConversion(productId, testData.testId, null, currentPrice, actualBasePrice);
+                                log('✅ Tracked conversion as base price (fallback) - Product:', productId, 'Test:', testData.testId, 'Price:', actualBasePrice);
+                            }
+                        }
                     } else {
                         // Track conversion without test info
                         trackConversion(productId, null, null, currentPrice, currentPrice);

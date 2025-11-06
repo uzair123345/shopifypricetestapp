@@ -268,7 +268,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       console.log("Session access token exists:", !!session.accessToken);
       
       try {
-        // First, check if script already exists and remove it
+        // First, check if script already exists and remove ALL old versions
         const checkScriptTagsResponse = await admin.graphql(`
           query getScriptTags($first: Int!) {
             scriptTags(first: $first) {
@@ -285,30 +285,58 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         });
 
         const checkScriptTagsData = await checkScriptTagsResponse.json();
-        const existingScripts = checkScriptTagsData.data?.scriptTags?.edges?.map((edge: any) => edge.node) || [];
-        const existingScript = existingScripts.find((tag: any) => 
-          tag.src && tag.src.includes('ab-price-test-simple.js')
+        const allScripts = checkScriptTagsData.data?.scriptTags?.edges?.map((edge: any) => edge.node) || [];
+        
+        // Find ALL old A/B test scripts (any variation of the script name)
+        const oldScripts = allScripts.filter((tag: any) => 
+          tag.src && (
+            tag.src.includes('ab-price-test') ||
+            tag.src.includes('ab_price_test') ||
+            tag.src.includes('ab-price-test-simple.js') ||
+            tag.src.includes('ab-price-test.js')
+          )
         );
 
-        // Remove existing script if found
-        if (existingScript) {
-          console.log("Removing existing script tag:", existingScript.id);
-          await admin.graphql(`
-            mutation scriptTagDelete($id: ID!) {
-              scriptTagDelete(id: $id) {
-                deletedScriptTagId
-                userErrors {
-                  field
-                  message
+        // Remove ALL old scripts to ensure clean installation
+        let removedCount = 0;
+        for (const oldScript of oldScripts) {
+          try {
+            console.log("Removing old script tag:", oldScript.id, oldScript.src);
+            const deleteResponse = await admin.graphql(`
+              mutation scriptTagDelete($id: ID!) {
+                scriptTagDelete(id: $id) {
+                  deletedScriptTagId
+                  userErrors {
+                    field
+                    message
+                  }
                 }
               }
+            `, {
+              variables: { id: oldScript.id }
+            });
+            
+            const deleteData = await deleteResponse.json();
+            if (deleteData.data?.scriptTagDelete?.deletedScriptTagId) {
+              removedCount++;
+              console.log("✅ Removed old script:", oldScript.src);
+            } else if (deleteData.data?.scriptTagDelete?.userErrors?.length > 0) {
+              console.error("Error removing script:", deleteData.data.scriptTagDelete.userErrors);
             }
-          `, {
-            variables: { id: existingScript.id }
-          });
+          } catch (deleteError) {
+            console.error("Error removing old script tag:", oldScript.id, deleteError);
+          }
+        }
+        
+        if (removedCount > 0) {
+          console.log(`✅ Removed ${removedCount} old script tag(s)`);
         }
 
         // Use the admin client to make the API call
+        // Add cache-busting query parameter to ensure latest version is always loaded
+        const scriptUrlWithVersion = `${appUrl}/ab-price-test-simple.js?v=${Date.now()}`;
+        console.log("Creating script tag with URL (with cache-busting):", scriptUrlWithVersion);
+        
         const scriptTagResponse = await admin.graphql(`
           mutation scriptTagCreate($input: ScriptTagInput!) {
             scriptTagCreate(input: $input) {
@@ -326,7 +354,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         `, {
           variables: {
             input: {
-              src: `${appUrl}/ab-price-test-simple.js`,
+              src: scriptUrlWithVersion,
               displayScope: "ONLINE_STORE"
             }
           }
@@ -349,10 +377,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         }
 
         if (scriptTagData.data?.scriptTagCreate?.scriptTag) {
+          // Verify the script was actually created
+          const createdScript = scriptTagData.data.scriptTagCreate.scriptTag;
+          console.log("✅ Script tag created successfully:", createdScript);
+          
           return json({ 
             success: true, 
-            message: "Script tag installed successfully! A/B price testing is now active.",
-            scriptTag: scriptTagData.data.scriptTagCreate.scriptTag
+            message: `Script tag installed successfully! ${removedCount > 0 ? `Removed ${removedCount} old version(s) and ` : ''}Installed latest version. A/B price testing is now active.`,
+            scriptTag: createdScript,
+            removedOldScripts: removedCount
           });
         } else {
           console.error("Unexpected response structure:", scriptTagData);
