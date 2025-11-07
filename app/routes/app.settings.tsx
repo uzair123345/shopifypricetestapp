@@ -859,11 +859,36 @@ export default function AppSettings() {
                               ℹ️ <strong>Auto-rotation status:</strong>
                             </Text>
                             {typeof window !== 'undefined' && (
-                              <Text variant="bodySm" color="subdued">
-                                {window.location.hostname.includes('vercel.app') 
-                                  ? "⚠️ Vercel free plan doesn't support automatic rotation. Please use the 'Manual Price Rotation' button below, or upgrade to Vercel Pro for automatic rotation."
-                                  : `✅ Auto-rotation is enabled! The system will automatically rotate prices every ${rotationInterval} minute${rotationInterval !== 1 ? 's' : ''} in the background.`}
-                              </Text>
+                              <>
+                                {window.location.hostname.includes('vercel.app') ? (
+                                  <BlockStack gap="200">
+                                    <Text variant="bodySm" color="subdued">
+                                      ⚠️ Vercel free plan doesn't support built-in cron jobs, but you can use a <strong>free external cron service</strong> to enable automatic rotation!
+                                    </Text>
+                                    <Text variant="bodySm" color="subdued">
+                                      <strong>Quick Setup:</strong>
+                                      <br />
+                                      1. Add <code>CRON_SECRET</code> to Vercel environment variables
+                                      <br />
+                                      2. Set up a free cron service (cron-job.org, EasyCron, etc.)
+                                      <br />
+                                      3. Configure it to call: <code>https://shopifypricetestapp-ab.vercel.app/api/cron/rotate-prices</code>
+                                      <br />
+                                      4. Add header: <code>x-cron-token: YOUR_CRON_SECRET</code>
+                                    </Text>
+                                    <Text variant="bodySm" color="subdued">
+                                      📖 See <code>EXTERNAL_CRON_SETUP.md</code> for detailed instructions.
+                                    </Text>
+                                    <Text variant="bodySm" color="subdued">
+                                      💡 Or use the "Manual Price Rotation" button below for on-demand rotation.
+                                    </Text>
+                                  </BlockStack>
+                                ) : (
+                                  <Text variant="bodySm" color="subdued">
+                                    ✅ Auto-rotation is enabled! The system will automatically rotate prices every {rotationInterval} minute{rotationInterval !== 1 ? 's' : ''} in the background.
+                                  </Text>
+                                )}
+                              </>
                             )}
                           </BlockStack>
                         </Box>

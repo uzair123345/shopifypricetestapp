@@ -15,17 +15,29 @@ import db from "../db.server";
 import { ShopifyPriceUpdater } from "../services/shopifyPriceUpdater.server";
 import { unauthenticated } from "../shopify.server";
 
-// Verify the request is from Vercel Cron
+// Verify the request is from Vercel Cron or external cron service
 function verifyCronRequest(request: Request): boolean {
   const authHeader = request.headers.get("authorization");
   const cronSecret = process.env.CRON_SECRET;
+  const cronToken = request.headers.get("x-cron-token");
   
-  if (!cronSecret) {
-    console.log("[cron] ⚠️ CRON_SECRET not set, allowing request (for local testing)");
-    return true; // Allow in local dev if secret not set
+  // Check for Vercel Cron (authorization header)
+  if (cronSecret && authHeader === `Bearer ${cronSecret}`) {
+    return true;
   }
   
-  return authHeader === `Bearer ${cronSecret}`;
+  // Check for external cron service (x-cron-token header)
+  if (cronSecret && cronToken === cronSecret) {
+    return true;
+  }
+  
+  // Allow if no secret is set (for local testing)
+  if (!cronSecret) {
+    console.log("[cron] ⚠️ CRON_SECRET not set, allowing request (for local testing)");
+    return true;
+  }
+  
+  return false;
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
