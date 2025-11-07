@@ -15,7 +15,7 @@ import db from "../db.server";
 import { ShopifyPriceUpdater } from "../services/shopifyPriceUpdater.server";
 import { unauthenticated } from "../shopify.server";
 
-// Verify the request is from Vercel Cron or external cron service
+// Verify the request is from Vercel Cron, external cron service, or client-side polling
 function verifyCronRequest(request: Request): boolean {
   const authHeader = request.headers.get("authorization");
   const cronSecret = process.env.CRON_SECRET;
@@ -28,6 +28,12 @@ function verifyCronRequest(request: Request): boolean {
   
   // Check for external cron service (x-cron-token header)
   if (cronSecret && cronToken === cronSecret) {
+    return true;
+  }
+  
+  // Allow client-side polling (from admin panel) - simple token check
+  if (cronToken === 'client-side-polling') {
+    console.log("[cron] ✅ Client-side polling request accepted");
     return true;
   }
   

@@ -709,15 +709,92 @@ export default function AppSettings() {
     setAutoRotate(newValue);
   };
 
-  // Note: Auto-rotation is now handled server-side by the scheduler
-  // This effect is kept for backward compatibility but doesn't run client-side rotation
+  // Client-side auto-rotation polling (works on free Vercel plan)
+  // This runs in the browser when the admin panel is open
+  const rotationIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const [lastRotationTime, setLastRotationTime] = useState<Date | null>(null);
+  const [rotationStatus, setRotationStatus] = useState<string>("");
+
   useEffect(() => {
-    if (autoRotate) {
-      console.log("🔄 Auto-rotation is enabled - handled by server-side scheduler");
-    } else {
+    // Clear any existing interval
+    if (rotationIntervalRef.current) {
+      clearInterval(rotationIntervalRef.current);
+      rotationIntervalRef.current = null;
+    }
+
+    // Only run if auto-rotation is enabled and we're on Vercel
+    if (autoRotate && typeof window !== 'undefined' && window.location.hostname.includes('vercel.app')) {
+      console.log("🔄 Starting client-side auto-rotation polling (interval: " + rotationInterval + " minutes)");
+      setRotationStatus("🔄 Auto-rotation active (runs when admin panel is open)");
+
+      // Convert minutes to milliseconds
+      const intervalMs = rotationInterval * 60 * 1000;
+
+      // Initial delay to avoid immediate execution
+      const initialDelay = setTimeout(() => {
+        // Then set up the interval
+        rotationIntervalRef.current = setInterval(async () => {
+          try {
+            console.log("🔄 Client-side auto-rotation triggered");
+            setRotationStatus("🔄 Rotating prices...");
+            
+            const response = await fetch(`${appUrl}/api/cron/rotate-prices`, {
+              method: 'GET',
+              headers: {
+                'x-cron-token': 'client-side-polling' // Simple token for client-side calls
+              }
+            });
+
+            const result = await response.json();
+            
+            if (response.ok && result.success) {
+              setLastRotationTime(new Date());
+              setRotationStatus(`✅ Last rotated: ${new Date().toLocaleTimeString()}`);
+              console.log("✅ Client-side auto-rotation successful:", result);
+            } else {
+              setRotationStatus(`⚠️ Rotation skipped: ${result.message || 'Unknown reason'}`);
+              console.log("⚠️ Client-side auto-rotation skipped:", result);
+            }
+          } catch (error) {
+            console.error("❌ Client-side auto-rotation error:", error);
+            setRotationStatus("❌ Rotation error - check console");
+          }
+        }, intervalMs);
+
+        // Also trigger immediately on first run
+        fetch(`${appUrl}/api/cron/rotate-prices`, {
+          method: 'GET',
+          headers: {
+            'x-cron-token': 'client-side-polling'
+          }
+        }).then(res => res.json()).then(result => {
+          if (result.success) {
+            setLastRotationTime(new Date());
+            setRotationStatus(`✅ Last rotated: ${new Date().toLocaleTimeString()}`);
+          }
+        }).catch(err => console.error("Initial rotation error:", err));
+      }, 2000); // Wait 2 seconds before starting
+
+      return () => {
+        clearTimeout(initialDelay);
+        if (rotationIntervalRef.current) {
+          clearInterval(rotationIntervalRef.current);
+          rotationIntervalRef.current = null;
+        }
+      };
+    } else if (!autoRotate) {
+      setRotationStatus("");
       console.log("⏹️ Auto-rotation is disabled");
     }
-  }, [autoRotate]);
+
+    // Cleanup on unmount or when autoRotate/rotationInterval changes
+    return () => {
+      if (rotationIntervalRef.current) {
+        clearInterval(rotationIntervalRef.current);
+        rotationIntervalRef.current = null;
+      }
+    };
+  }, [autoRotate, rotationInterval, appUrl]);
 
   return (
     <Page title="A/B Price Test Settings" subtitle="Configure automatic integration">
@@ -862,26 +939,33 @@ export default function AppSettings() {
                               <>
                                 {window.location.hostname.includes('vercel.app') ? (
                                   <BlockStack gap="200">
-                                    <Text variant="bodySm" color="subdued">
-                                      ⚠️ Vercel free plan doesn't support built-in cron jobs, but you can use a <strong>free external cron service</strong> to enable automatic rotation!
-                                    </Text>
-                                    <Text variant="bodySm" color="subdued">
-                                      <strong>Quick Setup:</strong>
-                                      <br />
-                                      1. Add <code>CRON_SECRET</code> to Vercel environment variables
-                                      <br />
-                                      2. Set up a free cron service (cron-job.org, EasyCron, etc.)
-                                      <br />
-                                      3. Configure it to call: <code>https://shopifypricetestapp-ab.vercel.app/api/cron/rotate-prices</code>
-                                      <br />
-                                      4. Add header: <code>x-cron-token: YOUR_CRON_SECRET</code>
-                                    </Text>
-                                    <Text variant="bodySm" color="subdued">
-                                      📖 See <code>EXTERNAL_CRON_SETUP.md</code> for detailed instructions.
-                                    </Text>
-                                    <Text variant="bodySm" color="subdued">
-                                      💡 Or use the "Manual Price Rotation" button below for on-demand rotation.
-                                    </Text>
+                                    {autoRotate ? (
+                                      <>
+                                        <Text variant="bodySm" color="subdued">
+                                          ✅ <strong>Client-side auto-rotation is active!</strong> Prices will rotate every {rotationInterval} minute{rotationInterval !== 1 ? 's' : ''} while the admin panel is open.
+                                        </Text>
+                                        {rotationStatus && (
+                                          <Text variant="bodySm" color="subdued">
+                                            {rotationStatus}
+                                          </Text>
+                                        )}
+                                        <Text variant="bodySm" color="subdued">
+                                          💡 <strong>Note:</strong> Rotation runs in your browser when the admin panel is open. Keep the tab open for continuous rotation.
+                                        </Text>
+                                        <Text variant="bodySm" color="subdued">
+                                          🔄 <strong>Alternative:</strong> For 24/7 rotation, use an external cron service (see <code>EXTERNAL_CRON_SETUP.md</code>).
+                                        </Text>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Text variant="bodySm" color="subdued">
+                                          💡 <strong>Enable auto-rotation</strong> to rotate prices automatically. On Vercel free plan, rotation runs in your browser when the admin panel is open.
+                                        </Text>
+                                        <Text variant="bodySm" color="subdued">
+                                          🔄 <strong>For 24/7 rotation:</strong> Use a free external cron service (see <code>EXTERNAL_CRON_SETUP.md</code>).
+                                        </Text>
+                                      </>
+                                    )}
                                   </BlockStack>
                                 ) : (
                                   <Text variant="bodySm" color="subdued">
