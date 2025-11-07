@@ -211,11 +211,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       }
     }
 
+    // Check if external cron is configured (CRON_SECRET is set)
+    const hasExternalCron = !!process.env.CRON_SECRET;
+
     return json({
       scriptInstalled: !!existingScript,
       settings: mergedSettings,
       appUrl,
       needsUpdate: needsUpdate,
+      hasExternalCron, // Indicate if external cron service is configured
     });
   } catch (error) {
     console.error("Error loading settings:", error);
@@ -586,7 +590,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function AppSettings() {
-  const { scriptInstalled, settings, appUrl } = useLoaderData<typeof loader>();
+  const { scriptInstalled, settings, appUrl, hasExternalCron } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   
   const [isManualRotating, setIsManualRotating] = useState(false);
@@ -941,32 +945,62 @@ export default function AppSettings() {
                                   <BlockStack gap="200">
                                     {autoRotate ? (
                                       <>
-                                        <Text variant="bodySm" color="subdued">
-                                          ✅ <strong>Client-side auto-rotation is active!</strong> Prices will rotate every {rotationInterval} minute{rotationInterval !== 1 ? 's' : ''} while the admin panel is open.
-                                        </Text>
-                                        {rotationStatus && (
-                                          <Text variant="bodySm" color="subdued">
-                                            {rotationStatus}
-                                          </Text>
+                                        {hasExternalCron ? (
+                                          <>
+                                            <Text variant="bodySm" color="subdued">
+                                              ✅ <strong>24/7 Auto-rotation is ACTIVE!</strong> External cron service is configured and running.
+                                            </Text>
+                                            <Text variant="bodySm" color="subdued">
+                                              🔄 Prices will rotate every {rotationInterval} minute{rotationInterval !== 1 ? 's' : ''} automatically, even when your computer is off.
+                                            </Text>
+                                            {rotationStatus && (
+                                              <Text variant="bodySm" color="subdued">
+                                                {rotationStatus}
+                                              </Text>
+                                            )}
+                                            <Text variant="bodySm" color="subdued">
+                                              💡 <strong>Note:</strong> Client-side rotation also runs when the admin panel is open (for immediate feedback). External cron handles 24/7 rotation in the background.
+                                            </Text>
+                                            <Text variant="bodySm" color="subdued">
+                                              📊 <strong>Monitor:</strong> Check Vercel logs to see rotation activity: <code>https://vercel.com/shopifypricetestapp-ab/logs</code>
+                                            </Text>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <Text variant="bodySm" color="subdued">
+                                              ✅ <strong>Client-side auto-rotation is active!</strong> Prices will rotate every {rotationInterval} minute{rotationInterval !== 1 ? 's' : ''} while the admin panel is open.
+                                            </Text>
+                                            {rotationStatus && (
+                                              <Text variant="bodySm" color="subdued">
+                                                {rotationStatus}
+                                              </Text>
+                                            )}
+                                            <Text variant="bodySm" color="subdued">
+                                              ⚠️ <strong>Important:</strong> Client-side rotation only works while the admin panel is open. For <strong>24/7 automatic rotation</strong> (even when your computer is off), you need to set up a free external cron service.
+                                            </Text>
+                                            <Text variant="bodySm" color="subdued">
+                                              📖 <strong>Quick Setup (5 minutes):</strong> See <code>SIMPLE_24_7_SETUP.md</code> for step-by-step instructions. It's free and takes only 5 minutes!
+                                            </Text>
+                                            <Text variant="bodySm" color="subdued">
+                                              ✅ Once set up, rotation will work 24/7 automatically - no manual tasks needed!
+                                            </Text>
+                                          </>
                                         )}
-                                        <Text variant="bodySm" color="subdued">
-                                          ⚠️ <strong>Important:</strong> Client-side rotation only works while the admin panel is open. For <strong>24/7 automatic rotation</strong> (even when your computer is off), you need to set up a free external cron service.
-                                        </Text>
-                                        <Text variant="bodySm" color="subdued">
-                                          📖 <strong>Quick Setup (5 minutes):</strong> See <code>SIMPLE_24_7_SETUP.md</code> for step-by-step instructions. It's free and takes only 5 minutes!
-                                        </Text>
-                                        <Text variant="bodySm" color="subdued">
-                                          ✅ Once set up, rotation will work 24/7 automatically - no manual tasks needed!
-                                        </Text>
                                       </>
                                     ) : (
                                       <>
                                         <Text variant="bodySm" color="subdued">
-                                          💡 <strong>Enable auto-rotation</strong> to rotate prices automatically. On Vercel free plan, rotation runs in your browser when the admin panel is open.
+                                          💡 <strong>Enable auto-rotation</strong> to rotate prices automatically.
                                         </Text>
-                                        <Text variant="bodySm" color="subdued">
-                                          🔄 <strong>For 24/7 rotation:</strong> Use a free external cron service (see <code>EXTERNAL_CRON_SETUP.md</code>).
-                                        </Text>
+                                        {hasExternalCron ? (
+                                          <Text variant="bodySm" color="subdued">
+                                            ✅ External cron service is configured! Once enabled, rotation will work 24/7 automatically.
+                                          </Text>
+                                        ) : (
+                                          <Text variant="bodySm" color="subdued">
+                                            🔄 <strong>For 24/7 rotation:</strong> Set up a free external cron service (see <code>SIMPLE_24_7_SETUP.md</code>).
+                                          </Text>
+                                        )}
                                       </>
                                     )}
                                   </BlockStack>
