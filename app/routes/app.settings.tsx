@@ -950,10 +950,13 @@ export default function AppSettings() {
                                           </Text>
                                         )}
                                         <Text variant="bodySm" color="subdued">
-                                          💡 <strong>Note:</strong> Rotation runs in your browser when the admin panel is open. Keep the tab open for continuous rotation.
+                                          ⚠️ <strong>Important:</strong> Client-side rotation only works while the admin panel is open. For <strong>24/7 automatic rotation</strong> (even when your computer is off), you need to set up a free external cron service.
                                         </Text>
                                         <Text variant="bodySm" color="subdued">
-                                          🔄 <strong>Alternative:</strong> For 24/7 rotation, use an external cron service (see <code>EXTERNAL_CRON_SETUP.md</code>).
+                                          📖 <strong>Quick Setup (5 minutes):</strong> See <code>SIMPLE_24_7_SETUP.md</code> for step-by-step instructions. It's free and takes only 5 minutes!
+                                        </Text>
+                                        <Text variant="bodySm" color="subdued">
+                                          ✅ Once set up, rotation will work 24/7 automatically - no manual tasks needed!
                                         </Text>
                                       </>
                                     ) : (
