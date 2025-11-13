@@ -2,7 +2,7 @@
   "name": "ab-price-test",
   "private": true,
   "scripts": {
-    "build": "node scripts/prepare-deploy.js && rm -rf node_modules/.prisma && prisma generate && prisma migrate deploy && remix vite:build",
+    "build": "node scripts/prepare-deploy.js && rm -rf node_modules/.prisma && prisma generate && (prisma migrate deploy || prisma migrate resolve --rolled-back 20240530213853_create_session_table && prisma migrate deploy || prisma db push --skip-generate) && remix vite:build",
     "dev": "shopify app dev",
     "config:link": "shopify app config link",
     "generate": "shopify app generate",
