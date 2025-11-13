@@ -13,10 +13,10 @@ if (window.ABPriceTestInitialized) {
     'use strict';
     
     // Configuration
-    let APP_URL = window.AB_PRICE_TEST_APP_URL || 'https://attempts-clarke-serving-rules.trycloudflare.com';
+    let APP_URL = window.AB_PRICE_TEST_APP_URL || 'https://shopifypricetestsplitapp.vercel.app';
     const DEBUG_MODE = true;
     
-    // Try to detect the correct tunnel URL from the script tag
+    // Try to detect the correct app URL from the script tag
     function detectAppUrl() {
         // First, try to get from script tag (most reliable)
         const scriptTags = document.querySelectorAll('script[src*="ab-price-test"]');
@@ -25,20 +25,20 @@ if (window.ABPriceTestInitialized) {
             const match = scriptSrc.match(/^(https:\/\/[^\/]+)/);
             if (match) {
                 const detectedUrl = match[1];
-                // Only use if it's a valid trycloudflare.com URL
-                if (detectedUrl.includes('trycloudflare.com')) {
+                // Use detected URL if it's a valid app URL (Vercel or cloudflare tunnel)
+                if (detectedUrl.includes('vercel.app') || detectedUrl.includes('trycloudflare.com')) {
                     APP_URL = detectedUrl;
                     log('✅ Detected APP_URL from script tag:', APP_URL);
                     return;
                 } else {
-                    log('⚠️ Script tag has URL but it\'s not a cloudflare tunnel:', detectedUrl);
+                    log('⚠️ Script tag has URL but it\'s not recognized:', detectedUrl);
                 }
             }
         }
         
-        // Try to get from current page URL if it's a cloudflare tunnel
+        // Try to get from current page URL if it's a valid app URL
         try {
-            if (window.location.href.includes('trycloudflare.com')) {
+            if (window.location.href.includes('vercel.app') || window.location.href.includes('trycloudflare.com')) {
                 const match = window.location.href.match(/^(https:\/\/[^\/]+)/);
                 if (match) {
                     APP_URL = match[1];
@@ -52,7 +52,7 @@ if (window.ABPriceTestInitialized) {
         
         // Try to get from window.location.origin
         try {
-            if (window.location.origin.includes('trycloudflare.com')) {
+            if (window.location.origin.includes('vercel.app') || window.location.origin.includes('trycloudflare.com')) {
                 APP_URL = window.location.origin;
                 log('✅ Detected APP_URL from window.location.origin:', APP_URL);
                 return;
@@ -65,7 +65,7 @@ if (window.ABPriceTestInitialized) {
         if (window.parent && window.parent !== window) {
             try {
                 const parentUrl = window.parent.location.href;
-                if (parentUrl.includes('trycloudflare.com')) {
+                if (parentUrl.includes('vercel.app') || parentUrl.includes('trycloudflare.com')) {
                     const match = parentUrl.match(/^(https:\/\/[^\/]+)/);
                     if (match) {
                         APP_URL = match[1];
@@ -81,8 +81,8 @@ if (window.ABPriceTestInitialized) {
         // If all detection methods failed, warn user
         if (APP_URL.includes('attempts-clarke-serving-rules') || APP_URL.includes('sandwich-measurement')) {
             log('⚠️ Using fallback APP_URL, but it may be incorrect:', APP_URL);
-            log('💡 Please update the script tag in your Shopify theme with the current tunnel URL');
-            console.warn('[A/B Price Test] URL detection failed. Please update script tag with current tunnel URL.');
+            log('💡 Please update the script tag in your Shopify theme with the correct app URL');
+            console.warn('[A/B Price Test] URL detection failed. Please update script tag with correct app URL.');
         }
     }
     
@@ -369,9 +369,9 @@ if (window.ABPriceTestInitialized) {
         if (!APP_URL || APP_URL.includes('attempts-clarke-serving-rules') || APP_URL.includes('sandwich-measurement')) {
             console.error('[A/B Price Test] ⚠️ WARNING: APP_URL might be incorrect!', APP_URL);
             console.error('[A/B Price Test] ⚠️ Please check:');
-            console.error('[A/B Price Test] 1. Is your dev server running?');
-            console.error('[A/B Price Test] 2. Has the tunnel URL changed?');
-            console.error('[A/B Price Test] 3. Is the script tag installed in your Shopify theme?');
+            console.error('[A/B Price Test] 1. Is the script tag installed with the correct URL?');
+            console.error('[A/B Price Test] 2. Is the app URL set correctly in Vercel?');
+            console.error('[A/B Price Test] 3. Expected URL: https://shopifypricetestsplitapp.vercel.app');
         }
         
         // ONLY track views on product detail pages, NOT on listing pages

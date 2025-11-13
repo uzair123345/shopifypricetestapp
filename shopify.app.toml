@@ -1,8 +1,8 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
-client_id = "beca6ad051b2ddeeaebd410aa5b32c12"
-name = "ab-price-test"
-application_url = "https://shopifypricetestapp-ab.vercel.app"
+client_id = "6f1225ba1018b2ec693dcd559304a570"
+name = "ab-price-split"
+application_url = "https://shopifypricetestsplitapp.vercel.app"
 embedded = true
 
 [build]
@@ -22,9 +22,9 @@ api_version = "2025-10"
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "write_products,read_products,write_script_tags,read_script_tags"
+scopes = "read_products,write_products,read_script_tags,write_script_tags"
 optional_scopes = [ ]
 use_legacy_install_flow = false
 
 [auth]
-redirect_urls = [ "https://shopifypricetestapp-ab.vercel.app/api/auth" ]
+redirect_urls = [ "https://shopifypricetestsplitapp.vercel.app/api/auth" ]
