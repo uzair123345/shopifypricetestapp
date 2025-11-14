@@ -22,14 +22,14 @@ try {
   
   if (isP3009) {
     console.log('⚠️ Detected failed migration (P3009)');
-    console.log('📋 Step 2: Attempting to resolve failed migration...');
+    console.log('📋 Step 2: Resolving failed migration by marking as rolled back...');
     
     try {
-      // Try to resolve the failed migration by marking it as applied
+      // Mark the failed migration as rolled back, then we can retry it
       const failedMigrationName = '20240530213853_create_session_table';
-      console.log(`   Marking migration as applied: ${failedMigrationName}`);
-      execSync(`npx prisma migrate resolve --applied ${failedMigrationName}`, { stdio: 'inherit' });
-      console.log('✅ Failed migration marked as applied!');
+      console.log(`   Marking migration as rolled back: ${failedMigrationName}`);
+      execSync(`npx prisma migrate resolve --rolled-back ${failedMigrationName}`, { stdio: 'inherit' });
+      console.log('✅ Failed migration marked as rolled back!');
       
       console.log('📋 Step 3: Retrying migrate deploy...');
       try {
@@ -37,32 +37,42 @@ try {
         console.log('✅ Migrations applied successfully after resolve!');
         process.exit(0);
       } catch (retryError) {
-        console.log('⚠️ Migrate deploy still failed after resolve, using db push...');
+        console.log('⚠️ Migrate deploy still failed after resolve, trying alternative approach...');
       }
     } catch (resolveError) {
-      console.log('⚠️ Could not resolve migration, using db push as fallback...');
+      console.log('⚠️ Could not resolve migration, trying alternative approach...');
       const resolveErrorOutput = (resolveError.stderr?.toString() || '') + (resolveError.stdout?.toString() || '') + (resolveError.message || '');
-      console.log('   Error:', resolveErrorOutput);
+      console.log('   Resolve error:', resolveErrorOutput);
     }
   }
   
-  // If migrate deploy fails for any reason, use db push as fallback
-  // IMPORTANT: db push sometimes says "already in sync" when tables don't exist
-  // So we'll use --force-reset to ensure tables are actually created
-  console.log('📋 Step 2/3: Using db push to sync schema directly...');
-  console.log('   Note: Using --force-reset to ensure tables are created even if db push thinks they exist...');
-  console.log('   ⚠️  This will reset the database schema (existing data may be lost)');
-  
+  // Alternative approach: Mark all migrations as applied, then use db push
+  console.log('📋 Step 2/3: Alternative approach - marking all migrations as applied...');
   try {
-    // Use db push with --force-reset to force table creation
-    // This is necessary because db push can incorrectly report "already in sync"
-    // when tables don't actually exist
-    execSync('npx prisma db push --skip-generate --accept-data-loss --force-reset', { stdio: 'inherit' });
+    // Get list of all migrations
+    const migrations = [
+      '20240530213853_create_session_table',
+      '20250919132559_add_ab_test_tables',
+      '20250923113636_add_description_field'
+    ];
+    
+    for (const migration of migrations) {
+      try {
+        console.log(`   Marking ${migration} as applied...`);
+        execSync(`npx prisma migrate resolve --applied ${migration}`, { stdio: 'inherit' });
+      } catch (e) {
+        // Ignore errors - migration might already be marked
+        console.log(`   Note: ${migration} may already be resolved`);
+      }
+    }
+    
+    console.log('📋 Step 4: Using db push to sync schema...');
+    execSync('npx prisma db push --skip-generate --accept-data-loss', { stdio: 'inherit' });
     console.log('✅ Database schema synced using db push!');
     console.log('✅ All tables created successfully!');
     process.exit(0);
   } catch (pushError) {
-    console.error('❌ db push also failed');
+    console.error('❌ All migration approaches failed');
     console.error('This is a critical error - database tables cannot be created');
     const pushErrorOutput = (pushError.stderr?.toString() || '') + (pushError.stdout?.toString() || '') + (pushError.message || '');
     console.error('Error details:', pushErrorOutput);
