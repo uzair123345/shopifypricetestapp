@@ -49,14 +49,16 @@ try {
   try {
     // Use db push as fallback - it will create all tables based on schema
     // This bypasses migration history and just syncs the schema
-    // Force it to actually push changes even if it thinks it's in sync
-    execSync('npx prisma db push --skip-generate --accept-data-loss --force-reset', { stdio: 'inherit' });
+    // Note: We use --accept-data-loss to allow schema changes, but NOT --force-reset
+    // to avoid deleting existing data
+    execSync('npx prisma db push --skip-generate --accept-data-loss', { stdio: 'inherit' });
     console.log('✅ Database schema synced using db push!');
     console.log('✅ All tables created successfully!');
     process.exit(0);
   } catch (pushError) {
     console.error('❌ db push also failed');
     console.error('This is a critical error - database tables cannot be created');
+    console.error('Error details:', pushError.message || pushError);
     process.exit(1);
   }
 }
