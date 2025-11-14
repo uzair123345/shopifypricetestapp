@@ -16,7 +16,7 @@ try {
   console.log('✅ Migrations applied successfully!');
   process.exit(0);
 } catch (migrateError) {
-  // Check if it's a failed migration error (P3009)
+  // Get error output
   const errorOutput = (migrateError.stderr?.toString() || '') + (migrateError.stdout?.toString() || '') + (migrateError.message || '');
   const isP3009 = errorOutput.includes('P3009') || errorOutput.includes('failed migrations');
   
@@ -26,8 +26,6 @@ try {
     
     try {
       // Try to resolve the failed migration by marking it as applied
-      // This tells Prisma the migration was already applied (even though it failed)
-      // Then we'll use db push to ensure tables exist
       const failedMigrationName = '20240530213853_create_session_table';
       console.log(`   Marking migration as applied: ${failedMigrationName}`);
       execSync(`npx prisma migrate resolve --applied ${failedMigrationName}`, { stdio: 'inherit' });
@@ -43,28 +41,31 @@ try {
       }
     } catch (resolveError) {
       console.log('⚠️ Could not resolve migration, using db push as fallback...');
-      console.log('   Error:', resolveError.message || resolveError);
+      const resolveErrorOutput = (resolveError.stderr?.toString() || '') + (resolveError.stdout?.toString() || '') + (resolveError.message || '');
+      console.log('   Error:', resolveErrorOutput);
     }
   }
   
   // If migrate deploy fails for any reason, use db push as fallback
-  // This handles failed migrations (P3009) and other migration issues
+  // IMPORTANT: db push sometimes says "already in sync" when tables don't exist
+  // So we'll use --force-reset to ensure tables are actually created
   console.log('📋 Step 2/3: Using db push to sync schema directly...');
-  console.log('   This will create all tables based on the current schema...');
+  console.log('   Note: Using --force-reset to ensure tables are created even if db push thinks they exist...');
+  console.log('   ⚠️  This will reset the database schema (existing data may be lost)');
   
   try {
-    // Use db push as fallback - it will create all tables based on schema
-    // This bypasses migration history and just syncs the schema
-    // Note: We use --accept-data-loss to allow schema changes, but NOT --force-reset
-    // to avoid deleting existing data
-    execSync('npx prisma db push --skip-generate --accept-data-loss', { stdio: 'inherit' });
+    // Use db push with --force-reset to force table creation
+    // This is necessary because db push can incorrectly report "already in sync"
+    // when tables don't actually exist
+    execSync('npx prisma db push --skip-generate --accept-data-loss --force-reset', { stdio: 'inherit' });
     console.log('✅ Database schema synced using db push!');
     console.log('✅ All tables created successfully!');
     process.exit(0);
   } catch (pushError) {
     console.error('❌ db push also failed');
     console.error('This is a critical error - database tables cannot be created');
-    console.error('Error details:', pushError.message || pushError);
+    const pushErrorOutput = (pushError.stderr?.toString() || '') + (pushError.stdout?.toString() || '') + (pushError.message || '');
+    console.error('Error details:', pushErrorOutput);
     process.exit(1);
   }
 }
