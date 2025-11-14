@@ -25,19 +25,25 @@ try {
     console.log('📋 Step 2: Attempting to resolve failed migration...');
     
     try {
-      // Try to resolve the failed migration by marking it as rolled back
-      // This allows us to retry the migration
+      // Try to resolve the failed migration by marking it as applied
+      // This tells Prisma the migration was already applied (even though it failed)
+      // Then we'll use db push to ensure tables exist
       const failedMigrationName = '20240530213853_create_session_table';
-      console.log(`   Resolving migration: ${failedMigrationName}`);
-      execSync(`npx prisma migrate resolve --rolled-back ${failedMigrationName}`, { stdio: 'inherit' });
-      console.log('✅ Failed migration resolved!');
+      console.log(`   Marking migration as applied: ${failedMigrationName}`);
+      execSync(`npx prisma migrate resolve --applied ${failedMigrationName}`, { stdio: 'inherit' });
+      console.log('✅ Failed migration marked as applied!');
       
       console.log('📋 Step 3: Retrying migrate deploy...');
-      execSync('npx prisma migrate deploy', { stdio: 'inherit' });
-      console.log('✅ Migrations applied successfully after resolve!');
-      process.exit(0);
+      try {
+        execSync('npx prisma migrate deploy', { stdio: 'inherit' });
+        console.log('✅ Migrations applied successfully after resolve!');
+        process.exit(0);
+      } catch (retryError) {
+        console.log('⚠️ Migrate deploy still failed after resolve, using db push...');
+      }
     } catch (resolveError) {
       console.log('⚠️ Could not resolve migration, using db push as fallback...');
+      console.log('   Error:', resolveError.message || resolveError);
     }
   }
   
