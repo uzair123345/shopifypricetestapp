@@ -1,6 +1,7 @@
 {
   "devCommand": "npm run dev",
   "installCommand": "npm install",
+  "buildCommand": "npm run build",
   "framework": "remix",
   "regions": ["iad1"],
   "env": {
