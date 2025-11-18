@@ -40,9 +40,21 @@ export class ShopifyPriceUpdater {
         { variables: { id: productGid } }
       );
       const json = await resp.json();
+      
+      // Check if product exists (404 errors)
+      if (json?.errors || !json?.data?.product) {
+        console.warn(`⚠️ Product ${productGid} not found in Shopify (may have been deleted)`);
+        return "";
+      }
+      
       const nodes = json?.data?.product?.variants?.nodes || [];
       return nodes[0]?.id || "";
-    } catch (e) {
+    } catch (e: any) {
+      // Handle 404 errors gracefully (product doesn't exist)
+      if (e?.response?.code === 404 || e?.message?.includes("404") || e?.message?.includes("Not Found")) {
+        console.warn(`⚠️ Product ${productGid} not found in Shopify (may have been deleted)`);
+        return "";
+      }
       console.error("resolveVariantGid error for", productGid, e);
       return "";
     }
@@ -193,7 +205,9 @@ export class ShopifyPriceUpdater {
     const variantId = await this.resolveVariantGid(admin, productId);
     
     if (!variantId) {
-      throw new Error(`Could not resolve variant ID for product ${productId}`);
+      // Product doesn't exist in Shopify - skip it gracefully
+      console.warn(`⚠️ Cannot rotate test ${test.id} - product ${productId} not found in Shopify (may have been deleted)`);
+      return { success: false, message: `Product ${productId} not found in Shopify` };
     }
     
     console.log(`🔄 About to call updateProductPrice with:`);
@@ -276,7 +290,10 @@ export class ShopifyPriceUpdater {
         const variantId = await this.resolveVariantGid(admin, productId);
         
         if (!variantId) {
-          throw new Error(`Could not resolve variant ID for product ${productId}`);
+          // Product doesn't exist in Shopify - skip it gracefully
+          console.warn(`⚠️ Skipping product ${productId} - product not found in Shopify (may have been deleted)`);
+          results.push({ productId, skipped: true, reason: "Product not found in Shopify" });
+          continue;
         }
         
         console.log(`🔄 About to call updateProductPrice with:`);
