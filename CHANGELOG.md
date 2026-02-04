@@ -1,5 +1,14 @@
 # @shopify/shopify-app-template-remix
 
+## A/B Price Test App
+
+### 1.0.3
+- Analytics: Filter card has explicit white background and card-style shadow for consistent look with other cards.
+- Analytics: Filter bar font size increased to 21px for better readability.
+- Analytics: Filter changes (date range, product, clear) apply immediately; refetch runs on filter change so data and "Last updated" stay in sync.
+
+---
+
 ## 2025.08.16
 - [#52](https://github.com/Shopify/shopify-app-template-remix/pull/1153) Use `ApiVersion.July25` rather than `LATEST_API_VERSION` in `.graphqlrc`.
 

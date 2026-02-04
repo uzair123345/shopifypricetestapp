@@ -15,6 +15,11 @@ import {
   Badge,
   Box,
   Modal,
+  TextField,
+  DatePicker,
+  Popover,
+  ActionList,
+  Tag,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
@@ -22,12 +27,152 @@ import db from "../db.server";
 import { useState, useEffect, useRef } from "react";
 import { useFetcher } from "@remix-run/react";
 
+export type DateRangePreset =
+  | "today"
+  | "yesterday"
+  | "week"
+  | "lastWeek"
+  | "last30days"
+  | "last90days"
+  | "last365days"
+  | "lastMonth"
+  | "last12months"
+  | "custom";
+
+function startOfDay(d: Date): Date {
+  const x = new Date(d);
+  x.setUTCHours(0, 0, 0, 0);
+  return x;
+}
+
+function endOfDay(d: Date): Date {
+  const x = new Date(d);
+  x.setUTCHours(23, 59, 59, 999);
+  return x;
+}
+
+function getPresetDates(preset: DateRangePreset): { start: Date; end: Date } {
+  const now = new Date();
+  let start: Date;
+  let end: Date;
+  if (preset === "today") {
+    start = startOfDay(now);
+    end = endOfDay(now);
+  } else if (preset === "yesterday") {
+    const d = new Date(now);
+    d.setUTCDate(d.getUTCDate() - 1);
+    start = startOfDay(d);
+    end = endOfDay(d);
+  } else if (preset === "week") {
+    const d = new Date(now);
+    d.setUTCDate(d.getUTCDate() - 6);
+    start = startOfDay(d);
+    end = endOfDay(now);
+  } else if (preset === "lastWeek") {
+    const dayOfWeek = now.getUTCDay();
+    const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+    const lastMonday = new Date(now);
+    lastMonday.setUTCDate(now.getUTCDate() + mondayOffset - 7);
+    const lastSunday = new Date(lastMonday);
+    lastSunday.setUTCDate(lastMonday.getUTCDate() + 6);
+    start = startOfDay(lastMonday);
+    end = endOfDay(lastSunday);
+  } else if (preset === "last30days") {
+    const d = new Date(now);
+    d.setUTCDate(d.getUTCDate() - 29);
+    start = startOfDay(d);
+    end = endOfDay(now);
+  } else if (preset === "last90days") {
+    const d = new Date(now);
+    d.setUTCDate(d.getUTCDate() - 89);
+    start = startOfDay(d);
+    end = endOfDay(now);
+  } else if (preset === "last365days") {
+    const d = new Date(now);
+    d.setUTCDate(d.getUTCDate() - 364);
+    start = startOfDay(d);
+    end = endOfDay(now);
+  } else if (preset === "lastMonth") {
+    const firstOfThisMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    const lastOfLastMonth = new Date(firstOfThisMonth);
+    lastOfLastMonth.setUTCDate(0);
+    const firstOfLastMonth = new Date(lastOfLastMonth.getUTCFullYear(), lastOfLastMonth.getUTCMonth(), 1);
+    start = startOfDay(firstOfLastMonth);
+    end = endOfDay(lastOfLastMonth);
+  } else if (preset === "last12months") {
+    const d = new Date(now);
+    d.setUTCMonth(d.getUTCMonth() - 11);
+    d.setUTCDate(1);
+    start = startOfDay(d);
+    end = endOfDay(now);
+  } else {
+    start = startOfDay(now);
+    end = endOfDay(now);
+  }
+  return { start, end };
+}
+
+const PRESET_LABELS: Record<DateRangePreset, string> = {
+  today: "Today",
+  yesterday: "Yesterday",
+  week: "Last 7 days",
+  lastWeek: "Last week",
+  last30days: "Last 30 days",
+  last90days: "Last 90 days",
+  last365days: "Last 365 days",
+  lastMonth: "Last month",
+  last12months: "Last 12 months",
+  custom: "Custom",
+};
+
+const PRESET_VALUES: DateRangePreset[] = [
+  "today", "yesterday", "week", "lastWeek", "last30days", "last90days",
+  "last365days", "lastMonth", "last12months", "custom"
+];
+
+function parseDateRange(request: Request): { start: Date; end: Date; preset: DateRangePreset } {
+  const url = new URL(request.url);
+  const rangeParam = url.searchParams.get("range") as DateRangePreset | null;
+  const startParam = url.searchParams.get("startDate");
+  const endParam = url.searchParams.get("endDate");
+
+  // Preset (non-custom)
+  if (rangeParam && rangeParam !== "custom" && PRESET_VALUES.includes(rangeParam)) {
+    return { ...getPresetDates(rangeParam), preset: rangeParam };
+  }
+
+  // Custom: startDate and endDate
+  if (rangeParam === "custom" && startParam && endParam) {
+    const start = new Date(startParam);
+    const end = new Date(endParam);
+    if (!isNaN(start.getTime()) && !isNaN(end.getTime()) && start <= end) {
+      return { start, end, preset: "custom" };
+    }
+  }
+
+  // Legacy: no range param but startDate/endDate present
+  if (startParam && endParam) {
+    const start = new Date(startParam);
+    const end = new Date(endParam);
+    if (!isNaN(start.getTime()) && !isNaN(end.getTime()) && start <= end) {
+      return { start, end, preset: "custom" };
+    }
+  }
+
+  // Default: last 7 days (week)
+  return { ...getPresetDates("week"), preset: "week" };
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
 
+  const dateRange = parseDateRange(request);
+  const timestampFilter = { timestamp: { gte: startOfDay(dateRange.start), lte: endOfDay(dateRange.end) } };
+  const viewWhere = { shop: session.shop, ...timestampFilter };
+
   // Get all view events FIRST to see what's actually in the database
   const allViewEvents = await db.viewEvent.findMany({
-    where: { shop: session.shop },
+    where: viewWhere,
     orderBy: { timestamp: 'desc' }
   });
   
@@ -35,6 +180,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   allViewEvents.forEach(view => {
     console.log(`[Analytics] View Event: id=${view.id}, productId=${view.productId}, variantId=${view.variantId}, abTestId=${view.abTestId}, price=${view.price}, timestamp=${view.timestamp}`);
   });
+
+  // Product filter from URL (comma-separated product IDs)
+  const url = new URL(request.url);
+  const productIdsParam = url.searchParams.get("productIds");
+  const productIdSet = productIdsParam
+    ? new Set(productIdsParam.split(",").map((id) => id.trim()).filter(Boolean))
+    : null;
 
   // Get all tests with their products and variants
   // NOTE: We'll manually fetch variant views to ensure accuracy
@@ -47,10 +199,22 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     orderBy: { createdAt: 'desc' }
   });
 
+  // All unique products across tests (for filter dropdown)
+  const allProductsList: { productId: string; productTitle: string }[] = [];
+  const seenIds = new Set<string>();
+  for (const test of tests) {
+    for (const p of test.products) {
+      if (!seenIds.has(p.productId)) {
+        seenIds.add(p.productId);
+        allProductsList.push({ productId: p.productId, productTitle: p.productTitle });
+      }
+    }
+  }
+
   // Get all view events with variantId = null (base price views) for this shop
   const basePriceViews = await db.viewEvent.findMany({
     where: { 
-      shop: session.shop,
+      ...viewWhere,
       variantId: null,
       abTestId: { not: null } // Only views that are part of a test
     }
@@ -64,7 +228,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // Get all variant views (variantId is NOT null)
   const variantViewEvents = await db.viewEvent.findMany({
     where: {
-      shop: session.shop,
+      ...viewWhere,
       variantId: { not: null },
       abTestId: { not: null }
     }
@@ -77,8 +241,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   // Create variant-level analytics data from real tracking data
   // Fetch all conversions once outside the loop for better performance
+  const conversionWhere = { shop: session.shop, abTestId: { not: null }, ...timestampFilter };
   const allConversionEvents = await db.conversionEvent.findMany({
-    where: { shop: session.shop, abTestId: { not: null } }
+    where: conversionWhere
   });
   
   const analyticsData = tests.flatMap((test) => {
@@ -95,6 +260,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         ? test.products.find(p => p.productId === variant.variantProductId) || test.products[0]
         : test.products[0];
       const productId = product?.productId || test.products[0]?.productId || "";
+      
+      if (productIdSet && !productIdSet.has(productId)) return null;
       
       console.log(`[Analytics] Processing variant: testId=${test.id}, variantId=${variant.id}, variantName=${variant.variantName}, productId=${productId}, productName=${product?.productTitle}`);
       
@@ -162,7 +329,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         conversionRate: `${conversionRate}%`,
         revenue,
       };
-    });
+    }).filter((row): row is NonNullable<typeof row> => row != null);
   });
 
   // Add base price analytics data for each test
@@ -172,7 +339,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const durationMs = endDate.getTime() - startDate.getTime();
     const durationDays = Math.ceil(durationMs / (1000 * 60 * 60 * 24));
     
-    return test.products.map((product) => {
+    return test.products
+      .filter((product) => !productIdSet || productIdSet.has(product.productId))
+      .map((product) => {
       // Get base price views for this specific product and test
       // Match by productId and testId exactly - show views as they are in the database
       // Only include views with variantId = null (base price views)
@@ -235,11 +404,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     averageConversionRate: `${averageConversionRate}%`,
   };
 
-  // Group variants by test and product for better display
-  const testsWithVariants = tests.map(test => {
+  // Group variants by test and product for better display (respect product filter)
+  const testsWithVariants = tests
+    .filter((test) => !productIdSet || test.products.some((p) => productIdSet.has(p.productId)))
+    .map(test => {
     if (test.testType === "multiple") {
-      // For multiple product tests, group by product
-      const productsWithVariants = test.products.map(product => {
+      // For multiple product tests, group by product (only products in filter)
+      const productsWithVariants = test.products
+        .filter((product) => !productIdSet || productIdSet.has(product.productId))
+        .map(product => {
         const productVariants = test.variants.filter(variant => variant.variantProductId === product.productId);
         const variantsWithData = productVariants.map(variant => {
           const variantData = allAnalyticsData.find(v => 
@@ -321,7 +494,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }
   });
 
-  return json({ analyticsData: allAnalyticsData, summaryStats, testsWithVariants });
+  return json({
+    analyticsData: allAnalyticsData,
+    summaryStats,
+    testsWithVariants,
+    allProducts: allProductsList,
+    productIdsFilter: productIdsParam ? productIdsParam.split(",").map((id) => id.trim()).filter(Boolean) : [],
+    dateRange: {
+      startDate: dateRange.start.toISOString().slice(0, 10),
+      endDate: dateRange.end.toISOString().slice(0, 10),
+      preset: dateRange.preset,
+    },
+  });
 };
 
 export default function Analytics() {
@@ -336,17 +520,134 @@ export default function Analytics() {
   const [lastUpdate, setLastUpdate] = useState(new Date());
   const [isMounted, setIsMounted] = useState(false);
   const refreshIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  // Track which URL the fetcher data was loaded for – so we show loader data immediately after filter change
+  const fetcherSearchRef = useRef(location.search);
   
   // Mark component as mounted after initial render
   useEffect(() => {
     setIsMounted(true);
   }, []);
-  
-  // Use fetcher data if available, otherwise use initial data
-  const analyticsData = fetcher.data?.analyticsData || initialData.analyticsData;
-  const summaryStats = fetcher.data?.summaryStats || initialData.summaryStats;
-  const testsWithVariants = fetcher.data?.testsWithVariants || initialData.testsWithVariants;
+
+  // Only use fetcher data if it was loaded for the current URL (filters). Otherwise use loader data so filter changes apply immediately.
+  const fetcherMatchesCurrentUrl = location.search === fetcherSearchRef.current;
+  // When URL (filters) changed, prefer loader data so filter changes apply immediately; once fetcher completes for this URL we use fetcher data.
+  const analyticsData = (fetcherMatchesCurrentUrl && fetcher.data?.analyticsData) ? fetcher.data.analyticsData : initialData.analyticsData;
+  const summaryStats = (fetcherMatchesCurrentUrl && fetcher.data?.summaryStats) ? fetcher.data.summaryStats : initialData.summaryStats;
+  const testsWithVariants = (fetcherMatchesCurrentUrl && fetcher.data?.testsWithVariants) ? fetcher.data.testsWithVariants : initialData.testsWithVariants;
+  const allProducts = (fetcherMatchesCurrentUrl && fetcher.data?.allProducts) ? fetcher.data.allProducts : (initialData.allProducts ?? []);
+  const productIdsFilter = (fetcherMatchesCurrentUrl && fetcher.data?.productIdsFilter) ? fetcher.data.productIdsFilter : (initialData.productIdsFilter ?? []);
+  const dateRangeFromServer = (fetcherMatchesCurrentUrl && fetcher.data?.dateRange) ? fetcher.data.dateRange : initialData.dateRange;
   const isRefreshing = fetcher.state === "loading";
+
+  // Date range filter: modal + presets
+  const searchParams = new URLSearchParams(location.search);
+  const rangeParam = searchParams.get("range") as DateRangePreset | null;
+  const activePreset = dateRangeFromServer?.preset ?? (rangeParam || "week");
+  const [showDateRangeModal, setShowDateRangeModal] = useState(false);
+  const [productPopoverActive, setProductPopoverActive] = useState(false);
+  const [pendingPreset, setPendingPreset] = useState<DateRangePreset>(activePreset);
+  const [startDateInput, setStartDateInput] = useState(() => searchParams.get("startDate") ?? dateRangeFromServer?.startDate ?? "");
+  const [endDateInput, setEndDateInput] = useState(() => searchParams.get("endDate") ?? dateRangeFromServer?.endDate ?? "");
+  const now = new Date();
+  const [datePickerMonth, setDatePickerMonth] = useState(now.getMonth());
+  const [datePickerYear, setDatePickerYear] = useState(now.getFullYear());
+
+  // Client-side preset to date range (YYYY-MM-DD) for syncing calendar when preset is selected
+  const getPresetDateStrings = (preset: DateRangePreset): { startDate: string; endDate: string } => {
+    const toYMD = (d: Date) => d.toISOString().slice(0, 10);
+    const startOfDay = (d: Date) => new Date(new Date(d).setUTCHours(0, 0, 0, 0));
+    const endOfDay = (d: Date) => new Date(new Date(d).setUTCHours(23, 59, 59, 999));
+    if (preset === "today") {
+      const d = new Date();
+      return { startDate: toYMD(startOfDay(d)), endDate: toYMD(endOfDay(d)) };
+    }
+    if (preset === "yesterday") {
+      const d = new Date();
+      d.setUTCDate(d.getUTCDate() - 1);
+      return { startDate: toYMD(startOfDay(d)), endDate: toYMD(endOfDay(d)) };
+    }
+    if (preset === "week") {
+      const d = new Date();
+      d.setUTCDate(d.getUTCDate() - 6);
+      return { startDate: toYMD(startOfDay(d)), endDate: toYMD(endOfDay(now)) };
+    }
+    if (preset === "lastWeek") {
+      const dayOfWeek = now.getUTCDay();
+      const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+      const lastMonday = new Date(now);
+      lastMonday.setUTCDate(now.getUTCDate() + mondayOffset - 7);
+      const lastSunday = new Date(lastMonday);
+      lastSunday.setUTCDate(lastMonday.getUTCDate() + 6);
+      return { startDate: toYMD(startOfDay(lastMonday)), endDate: toYMD(endOfDay(lastSunday)) };
+    }
+    if (preset === "last30days") {
+      const d = new Date(now);
+      d.setUTCDate(d.getUTCDate() - 29);
+      return { startDate: toYMD(startOfDay(d)), endDate: toYMD(endOfDay(now)) };
+    }
+    if (preset === "last90days") {
+      const d = new Date(now);
+      d.setUTCDate(d.getUTCDate() - 89);
+      return { startDate: toYMD(startOfDay(d)), endDate: toYMD(endOfDay(now)) };
+    }
+    if (preset === "last365days") {
+      const d = new Date(now);
+      d.setUTCDate(d.getUTCDate() - 364);
+      return { startDate: toYMD(startOfDay(d)), endDate: toYMD(endOfDay(now)) };
+    }
+    if (preset === "lastMonth") {
+      const firstOfThisMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+      const lastOfLastMonth = new Date(firstOfThisMonth);
+      lastOfLastMonth.setUTCDate(0);
+      const firstOfLastMonth = new Date(lastOfLastMonth.getUTCFullYear(), lastOfLastMonth.getUTCMonth(), 1);
+      return { startDate: toYMD(firstOfLastMonth), endDate: toYMD(endOfDay(lastOfLastMonth)) };
+    }
+    if (preset === "last12months") {
+      const d = new Date(now);
+      d.setUTCMonth(d.getUTCMonth() - 11);
+      d.setUTCDate(1);
+      return { startDate: toYMD(startOfDay(d)), endDate: toYMD(endOfDay(now)) };
+    }
+    return { startDate: startDateInput || toYMD(now), endDate: endDateInput || toYMD(now) };
+  };
+
+  useEffect(() => {
+    const start = searchParams.get("startDate");
+    const end = searchParams.get("endDate");
+    if (start) setStartDateInput(start);
+    if (end) setEndDateInput(end);
+  }, [location.search]);
+
+  useEffect(() => {
+    setPendingPreset(activePreset);
+  }, [activePreset, showDateRangeModal]);
+
+  // When opening modal or selecting a preset, sync date inputs so calendar shows the range
+  useEffect(() => {
+    if (showDateRangeModal && pendingPreset !== "custom") {
+      const { startDate, endDate } = getPresetDateStrings(pendingPreset);
+      setStartDateInput(startDate);
+      setEndDateInput(endDate);
+    }
+  }, [showDateRangeModal, pendingPreset]);
+
+  const customRangeForPicker = {
+    start: startDateInput ? new Date(startDateInput) : new Date(now.getTime() - 6 * 24 * 60 * 60 * 1000),
+    end: endDateInput ? new Date(endDateInput) : now,
+  };
+
+  const applyDateRangeFromModal = () => {
+    if (pendingPreset === "custom") {
+      const params = new URLSearchParams();
+      params.set("range", "custom");
+      if (startDateInput) params.set("startDate", startDateInput);
+      if (endDateInput) params.set("endDate", endDateInput);
+      navigate(`/app/analytics?${params.toString()}`);
+    } else {
+      navigate(`/app/analytics?range=${pendingPreset}`);
+    }
+    setShowDateRangeModal(false);
+  };
   
   // Always-on polling - starts automatically when component is mounted
   useEffect(() => {
@@ -354,12 +655,15 @@ export default function Analytics() {
 
     // Don't fetch immediately - we already have initial data from loader
     // Start polling after page is fully loaded
-    const initialDelay = setTimeout(() => {
-      // Then refresh every 5 seconds
+      const initialDelay = setTimeout(() => {
+      // Then refresh every 5 seconds (preserve date filter via URL)
       refreshIntervalRef.current = setInterval(() => {
         try {
-          if (fetcher.state === "idle") { // Only fetch if not already loading
-            fetcher.load("/app/analytics?refresh=true");
+          if (fetcher.state === "idle") {
+            const params = new URLSearchParams(location.search);
+            params.set("refresh", "true");
+            fetcherSearchRef.current = location.search;
+            fetcher.load(`/app/analytics?${params.toString()}`);
           }
         } catch (error) {
           console.error("Error refreshing analytics:", error);
@@ -375,8 +679,25 @@ export default function Analytics() {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isMounted]); // Only depend on isMounted
+  }, [isMounted, location.search]); // Re-run when date filter (URL) changes
   
+  // When filters (URL) change by user action, refetch immediately so data and "Last updated" reflect the new filters right away.
+  const prevSearchRef = useRef(location.search);
+  useEffect(() => {
+    if (!isMounted || fetcher.state === "loading") return;
+    if (prevSearchRef.current === location.search) return;
+    prevSearchRef.current = location.search;
+    fetcherSearchRef.current = ""; // Prefer loader data until this load completes
+    fetcher.load(`/app/analytics${location.search ? `?${location.search.replace(/^\?/, "")}` : ""}`);
+  }, [location.search, isMounted, fetcher.state]);
+
+  // When fetcher completes, mark that we have data for the current URL so we can show it (and update lastUpdate).
+  useEffect(() => {
+    if (fetcher.state === "idle" && fetcher.data) {
+      fetcherSearchRef.current = location.search;
+    }
+  }, [fetcher.state, fetcher.data, location.search]);
+
   // Update last update time when data changes
   useEffect(() => {
     if (fetcher.data) {
@@ -384,16 +705,32 @@ export default function Analytics() {
     }
   }, [fetcher.data]);
   
+  const analyticsUrl = () => {
+    const params = new URLSearchParams(location.search);
+    params.set("refresh", "true");
+    return `/app/analytics?${params.toString()}`;
+  };
+
   const refreshAnalytics = () => {
-    // Only refresh if fetcher is idle (not already loading)
     if (fetcher.state === "idle") {
       try {
-        fetcher.load("/app/analytics?refresh=true");
+        fetcherSearchRef.current = location.search;
+        fetcher.load(analyticsUrl());
       } catch (error) {
         console.error("Error refreshing analytics:", error);
       }
     }
   };
+
+  const clearDateFilter = () => {
+    setStartDateInput("");
+    setEndDateInput("");
+    navigate("/app/analytics?range=week");
+  };
+
+  const currentRangeLabel = activePreset === "custom" && dateRangeFromServer
+    ? `${dateRangeFromServer.startDate} – ${dateRangeFromServer.endDate}`
+    : PRESET_LABELS[activePreset];
 
   const handleClearAnalytics = async () => {
     setIsClearing(true);
@@ -433,13 +770,13 @@ export default function Analytics() {
           <Card>
             <InlineStack align="space-between" blockAlign="center">
               <InlineStack gap="300" blockAlign="center">
-                <Text variant="bodyMd" fontWeight="medium">
+                <Text variant="bodyLg" fontWeight="regular">
                   Live Analytics
                 </Text>
                 <Badge tone={isRefreshing ? "attention" : "success"}>
                   {isRefreshing ? 'Updating...' : 'Live'}
                 </Badge>
-                <Text variant="bodySm" tone="subdued">
+                <Text variant="bodyMd" tone="subdued" fontWeight="regular">
                   Auto-updates every 5 seconds • Last updated: {lastUpdate.toLocaleTimeString()}
                 </Text>
               </InlineStack>
@@ -456,14 +793,250 @@ export default function Analytics() {
           </Card>
         )}
 
+        {/* Filter bar – Card with explicit white background and larger font to match other cards */}
+        <Card>
+          <Box
+            padding="300"
+            background="bg-surface"
+            borderRadius="200"
+            minHeight="52px"
+            style={{
+              fontSize: '21px',
+              fontWeight: 400,
+              backgroundColor: 'var(--p-color-bg-surface, #ffffff)',
+              boxShadow: 'var(--p-shadow-card, 0 0 0 1px rgba(63, 63, 68, 0.05), 0 1px 3px rgba(63, 63, 68, 0.15)',
+            }}
+          >
+            <InlineStack align="center" blockAlign="center" gap="400" wrap>
+              {/* Left: filter controls */}
+              <InlineStack align="center" gap="300" wrap={false}>
+                <Text as="span" variant="bodyLg" fontWeight="regular" tone="subdued">
+                  Filters
+                </Text>
+              <Button
+                onClick={() => setShowDateRangeModal(true)}
+                size="medium"
+                variant="tertiary"
+                disclosure="down"
+              >
+                {currentRangeLabel}
+              </Button>
+              {allProducts.length > 0 && (
+                <Popover
+                  active={productPopoverActive}
+                  activator={
+                    <Button
+                      size="medium"
+                      variant="tertiary"
+                      onClick={() => setProductPopoverActive(true)}
+                      disclosure={!productPopoverActive ? "down" : "up"}
+                    >
+                      {productIdsFilter.length === 1
+                        ? allProducts.find((p) => p.productId === productIdsFilter[0])?.productTitle ?? "All products"
+                        : "Product"}
+                    </Button>
+                  }
+                  onClose={() => setProductPopoverActive(false)}
+                  autofocusTarget="first-node"
+                >
+                  <ActionList
+                    items={[
+                      {
+                        content: "All products",
+                        onAction: () => {
+                          const params = new URLSearchParams(location.search);
+                          params.delete("productIds");
+                          navigate(`/app/analytics?${params.toString()}`);
+                          setProductPopoverActive(false);
+                        },
+                      },
+                      ...allProducts.map((p) => ({
+                        content: p.productTitle,
+                        onAction: () => {
+                          const params = new URLSearchParams(location.search);
+                          params.set("productIds", p.productId);
+                          navigate(`/app/analytics?${params.toString()}`);
+                          setProductPopoverActive(false);
+                        },
+                      })),
+                    ]}
+                  />
+                </Popover>
+              )}
+            </InlineStack>
+            {/* Right: active filter chips + clear all */}
+            <InlineStack align="center" gap="300" wrap>
+              {activePreset !== "week" && (
+                <Tag onRemove={() => {
+                  const params = new URLSearchParams(location.search);
+                  params.set("range", "week");
+                  navigate(`/app/analytics?${params.toString()}`);
+                }}>
+                  {currentRangeLabel}
+                </Tag>
+              )}
+              {productIdsFilter.length === 1 && (
+                <Tag onRemove={() => {
+                  const params = new URLSearchParams(location.search);
+                  params.delete("productIds");
+                  navigate(`/app/analytics?${params.toString()}`);
+                }}>
+                  {allProducts.find((p) => p.productId === productIdsFilter[0])?.productTitle ?? "Product"}
+                </Tag>
+              )}
+              {(activePreset !== "week" || productIdsFilter.length > 0) && (
+                <Button
+                  variant="plain"
+                  size="medium"
+                  onClick={() => navigate("/app/analytics?range=week")}
+                >
+                  Clear all
+                </Button>
+              )}
+            </InlineStack>
+          </InlineStack>
+          </Box>
+        </Card>
+
+        {/* Date range modal - two panels: presets (left) + custom calendar (right) */}
+        <Modal
+          open={showDateRangeModal}
+          onClose={() => setShowDateRangeModal(false)}
+          title="Date range"
+          size="large"
+          primaryAction={{
+            content: "Apply",
+            onAction: applyDateRangeFromModal,
+          }}
+          secondaryActions={[
+            { content: "Cancel", onAction: () => setShowDateRangeModal(false) },
+          ]}
+        >
+          <Modal.Section>
+            <Box paddingBlockEnd="400">
+              <InlineStack gap="0" blockAlign="stretch" wrap={false}>
+                {/* Left panel: preset list */}
+                <Box
+                  minWidth="220px"
+                  maxWidth="260px"
+                  maxHeight="360px"
+                  overflowY="auto"
+                  paddingInlineEnd="400"
+                  borderWidth="025"
+                  borderColor="border"
+                  borderBlockEndWidth="0"
+                  borderInlineEndWidth="1"
+                  background="bg-surface-secondary"
+                  paddingBlockStart="300"
+                  paddingBlockEnd="300"
+                  paddingInlineStart="300"
+                >
+                  <BlockStack gap="0">
+                    {PRESET_VALUES.map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => setPendingPreset(preset)}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "10px",
+                          width: "100%",
+                          padding: "10px 12px",
+                          textAlign: "left",
+                          background: pendingPreset === preset ? "var(--p-color-bg-surface-selected)" : "transparent",
+                          border: "none",
+                          borderRadius: "var(--p-border-radius-200)",
+                          cursor: "pointer",
+                          fontSize: "14px",
+                          fontFamily: "inherit",
+                          minHeight: "40px",
+                        }}
+                      >
+                        <span style={{ minWidth: "20px", display: "inline-flex" }}>
+                          {pendingPreset === preset ? (
+                            <Icon source="checkmark" tone="base" />
+                          ) : null}
+                        </span>
+                        <Text as="span" variant="bodyMd">
+                          {PRESET_LABELS[preset]}
+                        </Text>
+                      </button>
+                    ))}
+                  </BlockStack>
+                </Box>
+                {/* Right panel: Fixed – always show date range + calendar */}
+                <Box padding="400" minWidth="320px" minHeight="400px">
+                  <BlockStack gap="400">
+                    <Text as="h3" variant="headingSm">
+                      Fixed
+                    </Text>
+                    {pendingPreset !== "custom" && (
+                      <Text variant="bodyMd" tone="subdued">
+                        {PRESET_LABELS[pendingPreset]} • Click Apply to use, or pick dates below
+                      </Text>
+                    )}
+                    <Text variant="bodyMd" as="p" tone="subdued">
+                      Select start and end date
+                    </Text>
+                    <InlineStack gap="200" blockAlign="center">
+                      <TextField
+                        label=""
+                        type="date"
+                        value={startDateInput}
+                        onChange={(v) => {
+                          setStartDateInput(v);
+                          setPendingPreset("custom");
+                        }}
+                        autoComplete="off"
+                      />
+                      <Text as="span" variant="bodyMd" tone="subdued">
+                        –
+                      </Text>
+                      <TextField
+                        label=""
+                        type="date"
+                        value={endDateInput}
+                        onChange={(v) => {
+                          setEndDateInput(v);
+                          setPendingPreset("custom");
+                        }}
+                        autoComplete="off"
+                      />
+                    </InlineStack>
+                    <Box paddingBlockStart="200">
+                      <DatePicker
+                        month={datePickerMonth}
+                        year={datePickerYear}
+                        allowRange
+                        multiMonth
+                        selected={customRangeForPicker}
+                        onChange={(range) => {
+                          setStartDateInput(range.start.toISOString().slice(0, 10));
+                          setEndDateInput(range.end.toISOString().slice(0, 10));
+                          setPendingPreset("custom");
+                        }}
+                        onMonthChange={(month, year) => {
+                          setDatePickerMonth(month);
+                          setDatePickerYear(year);
+                        }}
+                      />
+                    </Box>
+                  </BlockStack>
+                </Box>
+              </InlineStack>
+            </Box>
+          </Modal.Section>
+        </Modal>
+
         <Layout>
           <Layout.Section>
             <InlineStack align="space-between" blockAlign="center" gap="300">
               <BlockStack gap="300">
-                <Text as="h1" variant="headingLg">
+                <Text as="h1" variant="headingXl" fontWeight="semibold">
                   Analytics
                 </Text>
-                <Text variant="bodyMd" as="p" tone="subdued">
+                <Text variant="bodyLg" as="p" tone="subdued" fontWeight="regular">
                   View test results and performance metrics to optimize your pricing strategy
                 </Text>
               </BlockStack>
